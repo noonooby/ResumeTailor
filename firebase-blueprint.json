@@ -1,0 +1,57 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user profile, currently holding simple metadata.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["email", "createdAt"]
+    },
+    "HistoryItem": {
+      "title": "HistoryItem",
+      "description": "A saved customized resume tailored to a job.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "company": { "type": "string" },
+        "role": { "type": "string" },
+        "score": { "type": "number" },
+        "jobDescription": { "type": "string" },
+        "result": { "type": "object" }
+      },
+      "required": ["id", "userId", "timestamp", "company", "role", "score", "jobDescription", "result"]
+    },
+    "UserTemplate": {
+      "title": "UserTemplate",
+      "description": "User's saved docx template (binary base64 encoded) and master styles.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "templateName": { "type": "string" },
+        "templateData": { "type": "string", "description": "Base64 encoded .docx file" },
+        "updatedAt": { "type": "number" },
+        "masterStyle": { "type": "object" }
+      },
+      "required": ["userId", "templateName", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profile."
+    },
+    "/users/{userId}/history/{historyId}": {
+      "schema": { "$ref": "#/entities/HistoryItem" },
+      "description": "History of generated resumes for the user."
+    },
+    "/users/{userId}/documents/masterTemplate": {
+      "schema": { "$ref": "#/entities/UserTemplate" },
+      "description": "User's master docx template."
+    }
+  }
+}

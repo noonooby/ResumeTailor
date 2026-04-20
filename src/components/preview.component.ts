@@ -1,0 +1,799 @@
+import { Component, input, output, signal, inject, OnInit, effect, computed, AfterViewInit, OnDestroy } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { OptimizationResult } from '../types';
+import { DocProcessorService } from '../services/doc-processor.service';
+import { GeminiService } from '../services/gemini.service';
+
+declare var html2pdf: any;
+
+@Component({
+  selector: 'app-preview',
+  standalone: true,
+  imports: [CommonModule, FormsModule],
+  styles: [`
+    /* Critical for keeping headers with content */
+    .job-block {
+        page-break-inside: avoid;
+        break-inside: avoid;
+        display: block;
+        position: relative;
+    }
+    
+    #resume-container {
+        background: #e2e8f0;
+        padding: 60px 0;
+        display: flex;
+        justify-content: center;
+        overflow-x: auto;
+        min-height: 100vh;
+    }
+
+    #resume-content {
+        width: 210mm;
+        min-height: 297mm;
+        background: white;
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        margin: 0 auto;
+        position: relative;
+        box-sizing: border-box;
+    }
+
+    /* Page Break Indicator - Proper Split */
+    .page-break-line {
+        position: absolute;
+        left: -40px;
+        right: -40px;
+        height: 40px;
+        background: #f9fafb;
+        pointer-events: none;
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-top: 1px solid #e5e7eb;
+        border-bottom: 1px solid #e5e7eb;
+    }
+    .page-break-label {
+        background: #94a3b8;
+        color: white;
+        font-size: 10px;
+        padding: 2px 10px;
+        border-radius: 9999px;
+        font-weight: bold;
+        letter-spacing: 0.1em;
+    }
+    
+    input.editable-header {
+        background: transparent;
+        border: 1px dashed transparent;
+        transition: all 0.2s;
+    }
+    input.editable-header:hover, input.editable-header:focus {
+        border-color: #cbd5e1;
+        background: #f8fafc;
+    }
+
+    .cl-textarea {
+        width: 100%;
+        height: 100%;
+        resize: none;
+        outline: none;
+        overflow: hidden;
+        background: transparent;
+    }
+    
+    /* Range Slider Styling */
+    input[type=range] {
+        -webkit-appearance: none;
+        background: transparent;
+    }
+    input[type=range]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        height: 16px;
+        width: 16px;
+        border-radius: 50%;
+        background: #3b82f6;
+        cursor: pointer;
+        margin-top: -6px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+    input[type=range]::-webkit-slider-runnable-track {
+        width: 100%;
+        height: 4px;
+        cursor: pointer;
+        background: #e2e8f0;
+        border-radius: 2px;
+    }
+
+    @keyframes progress {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(300%); }
+    }
+  `],
+  template: `
+    <div class="flex gap-8 animate-fade-in-up pb-20 relative">
+      
+      <!-- Subtle Loading Indicator -->
+      @if (isLoading()) {
+        <div class="absolute top-0 left-0 right-0 z-50 pointer-events-none">
+            <div class="h-1.5 w-full bg-blue-100 overflow-hidden rounded-full">
+                <div class="h-full bg-blue-500 animate-[progress_2s_infinite_linear] w-1/3"></div>
+            </div>
+            <div class="flex justify-center mt-2">
+                <span class="bg-white/90 backdrop-blur px-4 py-1 rounded-full shadow-sm border border-blue-100 text-xs font-bold text-blue-600 animate-pulse">
+                    AI is refining your resume...
+                </span>
+            </div>
+        </div>
+      }
+      
+      <!-- Main Content (Resume or Cover Letter) -->
+      <div class="flex-grow space-y-6 min-w-0">
+
+        <h2 class="text-2xl font-bold text-gray-900 mb-2">3. Review & Export</h2>
+
+        <!-- Version Switcher -->
+        @if (versions().length > 1) {
+            <div class="flex items-center gap-2 mb-4 bg-white p-2 rounded-lg border border-gray-200 shadow-sm w-fit">
+                <span class="text-xs font-bold text-gray-400 uppercase tracking-wider px-2">Versions</span>
+                <div class="flex gap-1">
+                    @for (v of versions(); track $index) {
+                        <button 
+                            (click)="versionChange.emit($index)"
+                            [class.bg-blue-500]="currentVersionIndex() === $index"
+                            [class.text-white]="currentVersionIndex() === $index"
+                            [class.bg-gray-100]="currentVersionIndex() !== $index"
+                            [class.text-gray-600]="currentVersionIndex() !== $index"
+                            class="w-8 h-8 rounded-md text-xs font-bold transition-all hover:scale-105">
+                            {{ $index + 1 }}
+                        </button>
+                    }
+                </div>
+            </div>
+        }
+
+        @if (errorMessage()) {
+            <div class="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3 mb-4 animate-fade-in">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-red-600 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                </svg>
+                <p class="text-sm text-red-800 font-medium">{{ errorMessage() }}</p>
+                <button (click)="errorMessage.set(null)" class="ml-auto text-red-500 hover:text-red-700">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                    </svg>
+                </button>
+            </div>
+        }
+
+        <!-- Tab Switcher -->
+        <div class="max-w-xs mx-auto print:hidden">
+            <div class="p-1 bg-gray-200/80 rounded-lg flex space-x-1">
+                <button 
+                    (click)="activeTab.set('resume')"
+                    [class.bg-white]="activeTab() === 'resume'"
+                    [class.text-gray-900]="activeTab() === 'resume'"
+                    [class.shadow-sm]="activeTab() === 'resume'"
+                    class="w-full rounded-md py-1.5 text-sm font-semibold text-gray-600 transition-all">
+                    Resume
+                </button>
+                <button
+                    (click)="activeTab.set('letter')"
+                    [class.bg-white]="activeTab() === 'letter'"
+                    [class.text-gray-900]="activeTab() === 'letter'"
+                    [class.shadow-sm]="activeTab() === 'letter'"
+                    class="w-full rounded-md py-1.5 text-sm font-semibold text-gray-600 transition-all">
+                    Cover Letter
+                </button>
+            </div>
+        </div>
+
+        <!-- ATS Analysis Report (Only for Resume) -->
+        @if (activeTab() === 'resume' && data()?.atsAnalysis) {
+            <div class="bg-indigo-50 border border-indigo-100 rounded-xl p-4 shadow-sm print:hidden transition-all duration-300">
+                <div class="flex flex-col md:flex-row gap-6 items-center justify-center">
+                    <!-- Score Circle (Always Visible) -->
+                    <div class="flex-shrink-0 flex items-center gap-4 cursor-pointer w-full md:w-auto justify-center" (click)="isAnalysisExpanded.set(!isAnalysisExpanded())">
+                        <div class="relative h-16 w-16 md:h-24 md:w-24 flex-shrink-0">
+                            <svg class="h-full w-full transform -rotate-90" viewBox="0 0 36 36">
+                                <path class="text-indigo-200" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-width="4" />
+                                <path class="text-indigo-600 transition-all duration-1000 ease-out" [attr.stroke-dasharray]="data()?.atsAnalysis?.score + ', 100'" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-width="4" />
+                            </svg>
+                            <div class="absolute inset-0 flex items-center justify-center flex-col">
+                                <span class="text-xl md:text-2xl font-bold text-indigo-900">{{ data()?.atsAnalysis?.score }}%</span>
+                                <span class="text-[10px] md:text-xs text-indigo-600 font-medium">ATS Score</span>
+                            </div>
+                        </div>
+                        
+                        <div class="flex-grow md:hidden text-center">
+                             <h3 class="text-lg font-bold text-indigo-900">Optimization Analysis</h3>
+                             <p class="text-indigo-600 text-xs">Click to {{ isAnalysisExpanded() ? 'collapse' : 'expand' }} details</p>
+                        </div>
+                        
+                        <div class="hidden md:block">
+                             <button class="text-indigo-500 hover:text-indigo-700 text-sm font-medium focus:outline-none">
+                                 {{ isAnalysisExpanded() ? 'Hide Details' : 'Show Details' }}
+                             </button>
+                        </div>
+                    </div>
+
+                    <!-- Details (Collapsible) -->
+                    @if (isAnalysisExpanded()) {
+                        <div class="flex-grow animate-fade-in w-full">
+                            <h3 class="text-lg font-bold text-indigo-900 mb-2 hidden md:block">Optimization Analysis</h3>
+                            <p class="text-indigo-800 text-sm mb-3 italic">{{ data()?.atsAnalysis?.improvementReasoning }}</p>
+                            
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <h4 class="text-xs font-bold uppercase text-indigo-400 mb-1">Matched Keywords</h4>
+                                <div class="flex flex-wrap gap-1">
+                                @for (word of data()?.atsAnalysis?.matchedKeywords; track word) {
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">{{ word }}</span>
+                                }
+                                </div>
+                            </div>
+                            <div>
+                                <h4 class="text-xs font-bold uppercase text-indigo-400 mb-1">Missing Keywords</h4>
+                                <div class="flex flex-wrap gap-1">
+                                @for (word of data()?.atsAnalysis?.missingKeywords; track word) {
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">{{ word }}</span>
+                                }
+                                </div>
+                            </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+
+        <!-- Toolbar -->
+        <div class="bg-white/90 backdrop-blur-md rounded-xl shadow-sm p-3 border border-gray-200 print:hidden sticky top-20 z-20">
+            <div class="flex flex-wrap items-center justify-between gap-y-3 gap-x-4">
+            
+            <!-- View Controls -->
+            <div class="flex flex-wrap items-center gap-4 text-gray-600">
+                <!-- Margin Controls -->
+                <div class="flex items-center gap-2 border-r pr-4">
+                    <span class="text-xs font-bold uppercase text-gray-400">Margins (mm)</span>
+                    <div class="flex items-center gap-1">
+                        <label class="text-[10px] text-gray-500">T/B</label>
+                        <input type="number" [ngModel]="masterStyle()?.margins?.top || 25.4" (ngModelChange)="updateMargin('top', $event); updateMargin('bottom', $event)" class="w-12 px-1 py-0.5 text-xs border rounded" step="1">
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <label class="text-[10px] text-gray-500">L/R</label>
+                        <input type="number" [ngModel]="masterStyle()?.margins?.left || 19" (ngModelChange)="updateMargin('left', $event); updateMargin('right', $event)" class="w-12 px-1 py-0.5 text-xs border rounded" step="1">
+                    </div>
+                </div>
+
+                <!-- Extra Settings -->
+                @if (activeTab() === 'resume') {
+                    <div class="flex items-center gap-3 h-6">
+                        <button 
+                            (click)="toggleJd()"
+                            class="text-xs font-bold px-2 py-1 rounded border transition-colors"
+                            [class.bg-blue-50]="showJd()"
+                            [class.border-blue-200]="showJd()"
+                            [class.text-blue-700]="showJd()"
+                            [class.bg-white]="!showJd()"
+                            [class.border-gray-200]="!showJd()"
+                            [class.text-gray-600]="!showJd()"
+                            >
+                            {{ showJd() ? 'Hide JD' : 'Show JD' }}
+                        </button>
+                    </div>
+                }
+            </div>
+
+            </div>
+        </div>
+
+        @if (activeTab() === 'resume') {
+            <!-- Actions -->
+            <div class="flex gap-2 ml-auto mb-4">
+                <button (click)="downloadDoc()" [disabled]="isLoading() || !data()" class="inline-flex items-center px-3 py-1.5 border border-transparent shadow-sm text-xs font-bold uppercase tracking-wide rounded text-white bg-blue-600 hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                    Export Resume (.DOCX)
+                </button>
+            </div>
+            <!-- Resume Paper View (HTML Preview) -->
+            <div id="resume-container" class="print:bg-white print:p-0">
+                <div id="resume-content" 
+                    class="bg-white shadow-lg min-h-[297mm] text-justify text-black leading-[1.3]"
+                    [style.font-family]="masterStyle()?.fontFamily || 'Calibri, Arial, sans-serif'"
+                    [style.font-size.pt]="masterStyle()?.fontSizePt || 10"
+                    [style.padding-top.mm]="masterStyle()?.margins?.top || 25.4"
+                    [style.padding-bottom.mm]="masterStyle()?.margins?.bottom || 25.4"
+                    [style.padding-left.mm]="masterStyle()?.margins?.left || 19"
+                    [style.padding-right.mm]="masterStyle()?.margins?.right || 19">
+                
+                <!-- Page Break Indicators -->
+                <div class="page-break-line print:hidden" style="top: 297mm;">
+                    <span class="page-break-label">PAGE 2</span>
+                </div>
+                
+                @if (data()) {
+                    <!-- Header -->
+                    <header class="text-center mb-6 border-b border-black pb-4">
+                        <h1 class="text-3xl font-bold uppercase mb-2 tracking-wide text-black">{{ data()?.personalInfo?.name }}</h1>
+                        <div class="text-sm flex justify-center flex-wrap gap-1 text-black font-medium">
+                        
+                        @if (data()?.personalInfo?.email) { <a [href]="'mailto:' + data()!.personalInfo.email" class="text-black no-underline">{{ data()!.personalInfo.email }}</a> }
+                        @if (data()?.personalInfo?.email && (data()?.personalInfo?.phone || data()?.personalInfo?.linkedin)) { <span class="mx-1">|</span> }
+                        
+                        @if (data()?.personalInfo?.phone) { <span>{{ data()?.personalInfo?.phone }}</span> }
+                        @if (data()?.personalInfo?.phone && data()?.personalInfo?.linkedin) { <span class="mx-1">|</span> }
+                        
+                        @if (data()?.personalInfo?.linkedin) { <span>{{ data()?.personalInfo?.linkedin }}</span> }
+                        </div>
+                    </header>
+
+                    <!-- Dynamic Sections -->
+                    @for (section of sections(); track section.id; let i = $index) {
+                        
+                        <!-- Hide Skills Check -->
+                        @if (section.id !== 'skills' || !hideSkillsSection()) {
+
+                            <section class="mb-4 group relative rounded-md transition-colors hover:bg-gray-50 p-2 -mx-2">
+                            <!-- Reorder Controls -->
+                            <div class="absolute right-0 top-0 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1 p-1 print:hidden z-10">
+                                <button (click)="moveSection(i, -1)" [disabled]="i === 0" class="p-1 bg-white border rounded shadow hover:bg-blue-50 text-gray-500 hover:text-blue-600">↑</button>
+                                <button (click)="moveSection(i, 1)" [disabled]="i === sections().length - 1" class="p-1 bg-white border rounded shadow hover:bg-blue-50 text-gray-500 hover:text-blue-600">↓</button>
+                            </div>
+
+                            <!-- Editable Title (Centered) -->
+                            <div class="mb-3 flex items-center justify-center gap-2">
+                                <span class="border-b border-black pb-0.5 inline-block">
+                                    <input 
+                                        [ngModel]="section.title.toUpperCase()" 
+                                        (ngModelChange)="section.title = $event; saveConfigs()"
+                                        class="editable-header font-bold uppercase tracking-wider text-sm w-full text-black placeholder-gray-400 focus:outline-none focus:ring-0 px-1 text-center bg-transparent"
+                                        style="min-width: 150px;"
+                                    >
+                                </span>
+                            </div>
+
+                            <!-- Summary Content -->
+                            @if (section.id === 'summary') {
+                                <p class="leading-snug italic text-justify text-black">{{ cleanText(data()?.summary || '') }}</p>
+                            }
+
+                            <!-- Experience Content -->
+                            @if (section.id === 'experience') {
+                                <div class="space-y-4">
+                                @for (exp of data()?.experience || []; track $index) {
+                                    <div class="job-block">
+                                        <div class="flex items-baseline flex-wrap gap-1 mb-1">
+                                            <span class="font-bold text-black">{{ exp.company }}</span>
+                                            <span class="text-black">,</span>
+                                            <span class="font-bold italic text-black">{{ exp.title || exp.role }}</span>
+                                            <span class="text-black">,</span>
+                                            <span class="text-black text-sm whitespace-nowrap">{{ exp.period || exp.duration }}</span>
+                                        </div>
+                                        <ul class="list-disc list-outside ml-4 space-y-1 marker:text-black">
+                                            @for (point of getExperiencePoints(exp); track point) {
+                                                <li class="pl-1 text-justify text-black">
+                                                    {{ cleanText(point) }}
+                                                </li>
+                                            }
+                                        </ul>
+                                    </div>
+                                }
+                                </div>
+                            }
+
+                            <!-- Education Content -->
+                            @if (section.id === 'education' && data()?.education?.length) {
+                                <div class="grid gap-4">
+                                @for (edu of data()?.education || []; track $index) {
+                                    <div class="job-block">
+                                        <div class="text-black">
+                                            <span class="font-bold">{{ edu.institution }}</span>
+                                            @if (edu.location) {<span>, {{ edu.location }}</span>}
+                                            <span> - </span>
+                                            <span class="italic">{{ edu.degree }}</span>
+                                            @if (edu.year) {<span>, {{ edu.year }}</span>}
+                                        </div>
+                                        @if (edu.details?.length) {
+                                            <div class="text-black text-sm mt-1 text-justify">
+                                                @for (detail of edu.details; track detail) {
+                                                    @let cleanDetail = cleanText(detail);
+                                                    <div class="text-black">{{ cleanDetail }}</div>
+                                                }
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                                </div>
+                            }
+                            
+                            <!-- Certifications Content -->
+                            @if (section.id === 'certifications' && data()?.certifications?.length) {
+                                <div class="mb-4 text-justify text-black">
+                                    @for (cert of data()?.certifications || []; track cert; let last = $last) {
+                                        @let f = formatBulletPoint(cert);
+                                        <span class="inline">
+                                            @if (f.hasKey) {
+                                                <strong>{{ f.key }}</strong>{{ f.val }}
+                                            } @else {
+                                                {{ f.key }}
+                                            }
+                                        </span>@if (!last) { <span class="text-black"> | </span> }
+                                    }
+                                </div>
+                            }
+                            </section>
+
+                        }
+                    }
+                } @else {
+                    <!-- Skeleton / Blank State -->
+                    <div class="p-8 space-y-8 animate-pulse">
+                        <div class="h-8 bg-gray-100 rounded w-1/2 mx-auto"></div>
+                        <div class="h-4 bg-gray-100 rounded w-3/4 mx-auto"></div>
+                        <div class="space-y-4">
+                            <div class="h-4 bg-gray-100 rounded w-1/4"></div>
+                            <div class="h-20 bg-gray-100 rounded w-full"></div>
+                        </div>
+                        <div class="space-y-4">
+                            <div class="h-4 bg-gray-100 rounded w-1/4"></div>
+                            <div class="h-40 bg-gray-100 rounded w-full"></div>
+                        </div>
+                    </div>
+                }
+
+                </div>
+            </div>
+        } @else {
+            <!-- Cover Letter View -->
+            <div id="cl-container" class="mx-auto max-w-[215.9mm]">
+                <div id="cl-content"
+                    class="bg-white shadow-lg min-h-[279.4mm] text-black leading-[1.6]"
+                    [style.font-family]="masterStyle()?.fontFamily || 'Calibri, Arial, sans-serif'"
+                    [style.font-size.pt]="masterStyle()?.fontSizePt || 10"
+                    [style.padding-top.mm]="masterStyle()?.margins?.top || 25.4"
+                    [style.padding-bottom.mm]="masterStyle()?.margins?.bottom || 25.4"
+                    [style.padding-left.mm]="masterStyle()?.margins?.left || 19"
+                    [style.padding-right.mm]="masterStyle()?.margins?.right || 19">
+
+                    @if (!coverLetterContent() && !isLoading()) {
+                         <div class="h-full flex flex-col items-center justify-center py-20 gap-4">
+                             <p class="text-gray-500 text-sm text-center max-w-md">No cover letter generated yet.</p>
+                         </div>
+                    } @else if (isLoading() && !coverLetterContent()) {
+                        <div class="animate-pulse space-y-8">
+                            <div class="h-4 bg-gray-100 rounded w-1/4"></div>
+                            <div class="space-y-4">
+                                <div class="h-4 bg-gray-100 rounded w-full"></div>
+                                <div class="h-4 bg-gray-100 rounded w-full"></div>
+                                <div class="h-4 bg-gray-100 rounded w-3/4"></div>
+                            </div>
+                            <div class="space-y-4">
+                                <div class="h-4 bg-gray-100 rounded w-full"></div>
+                                <div class="h-4 bg-gray-100 rounded w-full"></div>
+                                <div class="h-4 bg-gray-100 rounded w-1/2"></div>
+                            </div>
+                        </div>
+                    } @else {
+                        <div id="cl-content-inner">
+                            <div class="mb-8 text-black">
+                                {{ todayDate }}
+                            </div>
+                            
+                            <div class="mb-4 text-black">
+                                <p>Dear Hiring Manager,</p>
+                            </div>
+
+                            <!-- Content Area (Editable BODY ONLY) -->
+                            <textarea 
+                                [(ngModel)]="coverLetterContent" 
+                                class="cl-textarea text-justify text-black whitespace-pre-wrap"
+                                rows="15"
+                            ></textarea>
+                            
+                            <div class="mt-8 text-black">
+                                <p>Sincerely,</p>
+                                <br>
+                                <p class="font-bold">{{ data()?.personalInfo?.name }}</p>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-8 pt-4 border-t border-gray-100 print:hidden flex justify-end">
+                             <button (click)="downloadCoverLetterDoc()" [disabled]="!coverLetterContent() || isGeneratingCL() || isLoading() || !data()" class="inline-flex items-center px-3 py-1.5 border border-transparent shadow-sm text-xs font-bold uppercase tracking-wide rounded text-white bg-blue-600 hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                                Export Cover Letter (.DOCX)
+                             </button>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+        
+        <!-- Re-optimize Input (HIDDEN) -->
+      </div>
+      
+      <!-- Job Description Sidebar -->
+      @if (showJd() && activeTab() === 'resume') {
+         <div class="w-80 flex-shrink-0 bg-gray-50 border-l border-gray-200 p-4 sticky top-20 h-screen overflow-y-auto hidden xl:block print:hidden shadow-inner rounded-lg">
+            <h3 class="font-bold text-gray-700 mb-2">Reference Job Description</h3>
+            <p class="text-xs text-gray-500 mb-4">Use this to verify that the key requirements are addressed.</p>
+            <div class="whitespace-pre-wrap text-xs text-gray-600 font-mono bg-white p-3 border rounded">
+                {{ jobDescription() }}
+            </div>
+         </div>
+      }
+    </div>
+  `
+})
+export class PreviewComponent implements OnInit, AfterViewInit, OnDestroy {
+  data = input<OptimizationResult | null>(null);
+  jobDescription = input<string>('');
+  isLoading = input<boolean>(false);
+  versions = input<OptimizationResult[]>([]);
+  currentVersionIndex = input<number>(-1);
+  reoptimize = output<string>();
+  versionChange = output<number>();
+  feedbackInput = signal('');
+  
+  // Error State
+  errorMessage = signal<string | null>(null);
+  
+  // Visibility State
+  showJd = signal(false);
+  activeTab = signal<'resume' | 'letter'>('resume');
+  isAnalysisExpanded = signal(false);
+
+  // Master Style
+  masterStyle = signal<any>(null);
+
+  // Cover Letter State
+  coverLetterContent = signal<string>('');
+  isGeneratingCL = signal(false);
+  todayDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+  // Default sections UPPERCASE
+  sections = signal([
+    { id: 'summary', title: 'SUMMARY' },
+    { id: 'certifications', title: 'CERTIFICATIONS' }, 
+    { id: 'experience', title: 'WORK EXPERIENCE' },
+    { id: 'education', title: 'EDUCATION' }
+  ]);
+  
+  private docService = inject(DocProcessorService);
+  private geminiService = inject(GeminiService);
+  private resizeObserver: ResizeObserver | null = null;
+  private isAdjusting = false;
+
+  ngOnInit() {
+      this.masterStyle.set(this.docService.getMasterStyle());
+
+      const savedSections = localStorage.getItem('resume_section_order');
+      if (savedSections) {
+          try {
+              let parsed = JSON.parse(savedSections);
+              // Filter out skills section
+              parsed = parsed.filter((s: any) => s.id !== 'skills');
+              const defaultSecs = this.sections();
+              const existingIds = new Set(parsed.map((s: any) => s.id));
+              defaultSecs.forEach(ds => { if (!existingIds.has(ds.id)) parsed.push(ds); });
+              this.sections.set(parsed);
+          } catch(e) {}
+      }
+  }
+
+  ngAfterViewInit() {
+      const content = document.getElementById('resume-content');
+      if (content) {
+          this.resizeObserver = new ResizeObserver(() => {
+              if (!this.isAdjusting) {
+                  this.ensureTwoPages();
+              }
+          });
+          this.resizeObserver.observe(content);
+      }
+  }
+
+  ngOnDestroy() {
+      if (this.resizeObserver) {
+          this.resizeObserver.disconnect();
+      }
+  }
+
+  private ensureTwoPages() {
+      const content = document.getElementById('resume-content');
+      if (!content) return;
+      
+      // Approx conversion px to mm (96 DPI standard)
+      const heightMm = content.scrollHeight * (25.4 / 96); 
+      const maxAllowedHeight = 297 * 2; // 2 A4 pages
+      
+      if (heightMm > maxAllowedHeight + 2) { // 2mm buffer
+          this.isAdjusting = true;
+          const current = this.masterStyle() || {};
+          const margins = { ...(current.margins || { top: 25.4, bottom: 25.4, left: 19, right: 19 }) };
+          
+          let changed = false;
+          // Try reducing bottom margin first, then top, then font size
+          if (margins.bottom > 10) {
+              margins.bottom = Math.max(10, margins.bottom - 2);
+              changed = true;
+          } else if (margins.top > 10) {
+              margins.top = Math.max(10, margins.top - 2);
+              changed = true;
+          } else if (current.fontSizePt > 8.5) {
+              const updated = { ...current, fontSizePt: current.fontSizePt - 0.2 };
+              this.masterStyle.set(updated);
+              this.docService.updateMasterStyle(updated);
+              changed = true;
+          }
+
+          if (changed) {
+              const updated = { ...current, margins };
+              this.masterStyle.set(updated);
+              this.docService.updateMasterStyle(updated);
+          }
+          
+          setTimeout(() => { this.isAdjusting = false; }, 100);
+      }
+  }
+
+  updateMargin(side: 'top' | 'bottom' | 'left' | 'right', value: number) {
+      const current = this.masterStyle() || {};
+      const margins = current.margins || { top: 25.4, bottom: 25.4, left: 19, right: 19 };
+      margins[side] = value;
+      const updated = { ...current, margins };
+      this.masterStyle.set(updated);
+      this.docService.updateMasterStyle(updated);
+  }
+
+  saveConfigs() {
+      localStorage.setItem('resume_section_order', JSON.stringify(this.sections()));
+  }
+  
+  constructor() {
+      effect(() => { this.saveConfigs(); });
+      effect(() => {
+          const cl = this.data()?.coverLetter;
+          if (cl) {
+              this.coverLetterContent.set(cl);
+          }
+      });
+  }
+
+  toggleJd() { this.showJd.update(v => !v); }
+
+  // STRICTLY remove double asterisks from display text
+  cleanText(text: string): string {
+    if (!text) return '';
+    return text.replace(/\*\*/g, '').replace(/__/g, '').replace(/\*/g, '');
+  }
+
+  getExperiencePoints(exp: any): string[] {
+    if (!exp) return [];
+    let points = exp.achievements || exp.points || [];
+    if (points.length === 0 && exp.description) {
+        // If description is a string, split it by bullets or newlines
+        points = exp.description.split(/\n|•/).map((p: string) => p.trim()).filter((p: string) => p.length > 0);
+    }
+    return points;
+  }
+
+  formatBulletPoint(point: string): { key: string, val: string, hasKey: boolean } {
+    if (!point) return { key: '', val: '', hasKey: false };
+    const separator = ' - ';
+    const idx = point.indexOf(separator);
+    if (idx > -1) {
+        let key = point.substring(0, idx);
+        const val = point.substring(idx); 
+        
+        // Clean key (removes **)
+        key = this.cleanText(key);
+        
+        // Clean value as well to avoid artifacts in the middle of sentences
+        const cleanVal = this.cleanText(val);
+
+        return { key, val: cleanVal, hasKey: true };
+    }
+    return { key: this.cleanText(point), val: '', hasKey: false };
+  }
+
+  moveSection(index: number, direction: number) {
+    const newIndex = index + direction;
+    const currentSections = this.sections();
+    if (newIndex >= 0 && newIndex < currentSections.length) {
+      const temp = currentSections[index];
+      currentSections[index] = currentSections[newIndex];
+      currentSections[newIndex] = temp;
+      this.sections.set([...currentSections]);
+      this.saveConfigs();
+    }
+  }
+
+  triggerReoptimize() {
+    if (this.feedbackInput().trim()) {
+      this.reoptimize.emit(this.feedbackInput());
+      this.feedbackInput.set('');
+    }
+  }
+  
+  async generateCoverLetter() {
+      this.isGeneratingCL.set(true);
+      this.errorMessage.set(null);
+      try {
+          // Use summary + experience for context
+          const expText = (this.data()?.experience || []).map(e => `${e.company} ${e.title} ${(e.achievements || []).join(' ')}`).join('\n');
+          const context = `Summary: ${this.data()?.summary || ''}\nExperience: ${expText}`;
+          
+          const cl = await this.geminiService.generateCoverLetter(this.jobDescription(), context, this.data()?.personalInfo || {} as any);
+          this.coverLetterContent.set(cl);
+      } catch(e: any) {
+          console.error(e);
+          this.errorMessage.set(e.message || 'Failed to generate cover letter.');
+      } finally {
+          this.isGeneratingCL.set(false);
+      }
+  }
+
+  getSafeFilename(ext: string, customSuffix: string = ''): string {
+      const c = this.data()?.targetJob?.company?.replace(/[^a-zA-Z0-9]/g, '') || '';
+      const r = this.data()?.targetJob?.role?.replace(/[^a-zA-Z0-9]/g, '') || '';
+      const suffix = customSuffix || (this.activeTab() === 'letter' ? '_CoverLetter' : '_Resume');
+      
+      let base = c ? `${c}_${r}${suffix}` : `Resume${suffix}`;
+      return `${base}.${ext}`;
+  }
+
+  nativePrint() {
+      window.print();
+  }
+
+  async downloadCoverLetterDoc() {
+    this.errorMessage.set(null);
+    
+    if (!this.coverLetterContent()) {
+        this.errorMessage.set("No cover letter content to export. Please generate one first.");
+        return;
+    }
+
+    try {
+        const blob = await this.docService.generateCoverLetterDoc(
+            this.data(), 
+            this.coverLetterContent()
+        );
+        if (blob) {
+            this.triggerDownload(blob, '_Cover_Letter');
+        }
+        else this.errorMessage.set('Could not generate cover letter DOCX. Please ensure a template was uploaded.');
+    } catch(e: any) {
+        console.error(e);
+        this.errorMessage.set(e.message || 'Failed to generate cover letter DOCX.');
+    }
+  }
+
+  async downloadDoc() {
+    this.errorMessage.set(null);
+
+    const sectionTitles: {[key: string]: string} = {};
+    this.sections().forEach(s => sectionTitles[s.id] = s.title);
+    
+    try {
+        const blob = await this.docService.generateDocWithTemplate(
+            this.data(), 
+            sectionTitles
+        );
+        if (blob) this.triggerDownload(blob);
+        else this.errorMessage.set('Could not generate DOCX. Please ensure a template was uploaded.');
+    } catch(e: any) {
+        console.error(e);
+        this.errorMessage.set(e.message || 'Failed to generate DOCX. Please verify the resume data.');
+    }
+  }
+  
+  triggerDownload(blob: Blob, suffix: string = '') {
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = this.getSafeFilename('docx', suffix);
+      link.click();
+      window.URL.revokeObjectURL(url);
+  }
+}

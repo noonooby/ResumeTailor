@@ -1,0 +1,38 @@
+{
+  "name": "resumetailor-ai-for-ios",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "ng serve --host 0.0.0.0 --port 3000",
+    "build": "ng build",
+    "preview": "ng serve --configuration=production",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@angular/build": "^21.0.0",
+    "@angular/cli": "^21.0.0",
+    "@angular/common": "^21.0.0",
+    "@angular/compiler": "^21.0.0",
+    "@angular/compiler-cli": "^21.0.0",
+    "@angular/core": "^21.0.0",
+    "@angular/forms": "^21.0.6",
+    "@angular/platform-browser": "^21.0.0",
+    "@angular/service-worker": "^21.0.6",
+    "@google/genai": "^1.34.0",
+    "docxtemplater": "3.37.11",
+    "firebase": "^12.12.0",
+    "idb-keyval": "6.2.1",
+    "jsonrepair": "^3.13.3",
+    "mammoth": "1.6.0",
+    "pizzip": "3.1.4",
+    "rxjs": "^7.8.2",
+    "tailwindcss": "latest"
+  },
+  "devDependencies": {
+    "@firebase/eslint-plugin-security-rules": "^0.0.1",
+    "@types/node": "^22.14.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  }
+}

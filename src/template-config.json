@@ -1,0 +1,16 @@
+{
+  "fontFamily": "Arial",
+  "fontSizePt": 11,
+  "margins": {
+    "top": 25.4,
+    "bottom": 25.4,
+    "left": 25.4,
+    "right": 25.4
+  },
+  "spacing": {
+    "before": "0",
+    "after": "200",
+    "line": "276",
+    "lineRule": "auto"
+  }
+}

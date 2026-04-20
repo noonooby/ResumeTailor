@@ -1,0 +1,70 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Phase 3: Primitives
+    function isSignedIn() { return request.auth != null && request.auth.token.email_verified == true; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
+
+    // Phase 2: Blueprint Validations
+    function isValidUser(data, uid) {
+      return data.keys().hasAll(['email', 'createdAt'])
+        && data.keys().size() <= 3
+        && data.email is string
+        && data.email == request.auth.token.email
+        && data.createdAt is timestamp;
+    }
+
+    function isValidHistoryItem(data, uid) {
+      return data.keys().hasAll(['id', 'userId', 'timestamp', 'company', 'role', 'score', 'jobDescription', 'result'])
+        && data.id is string && data.id.size() <= 200
+        && data.userId == uid
+        && data.timestamp is number
+        && data.company is string && data.company.size() <= 500
+        && data.role is string && data.role.size() <= 500
+        && data.score is number
+        && data.jobDescription is string && data.jobDescription.size() <= 100000 // Huge size due to JD length
+        && data.result is map;
+    }
+
+    function isValidUserTemplate(data, uid) {
+      return data.keys().hasAll(['userId', 'templateName', 'updatedAt'])
+        && data.userId == uid
+        && data.templateName is string && data.templateName.size() <= 500
+        && ( !data.keys().hasAny(['templateData']) || (data.templateData is string && data.templateData.size() <= 1000000) ) // Up to 1MB base64
+        && data.updatedAt is timestamp
+        && ( !data.keys().hasAny(['masterStyle']) || data.masterStyle is map );
+    }
+
+    // Rules
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUser(incoming(), userId) && incoming().createdAt == request.time;
+      allow update: if isOwner(userId) && isValidId(userId) && isValidUser(incoming(), userId) && incoming().createdAt == existing().createdAt;
+      allow delete: if isOwner(userId);
+
+      match /history/{historyId} {
+        allow read: if isOwner(userId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(historyId) && isValidId(userId) && isValidHistoryItem(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(historyId) && isValidId(userId) && isValidHistoryItem(incoming(), userId) && incoming().userId == existing().userId;
+        allow delete: if isOwner(userId) && isValidId(historyId);
+      }
+
+      match /documents/masterTemplate {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidUserTemplate(incoming(), userId) && incoming().updatedAt == request.time;
+        allow update: if isOwner(userId) && isValidId(userId) && isValidUserTemplate(incoming(), userId) && incoming().userId == existing().userId && incoming().updatedAt == request.time;
+        allow delete: if isOwner(userId);
+      }
+    }
+  }
+}
