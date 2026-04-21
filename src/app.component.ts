@@ -4,7 +4,8 @@ import { FormsModule } from '@angular/forms';
 import { GeminiService } from './services/gemini.service';
 import { HistoryService } from './services/history.service';
 import { DocProcessorService } from './services/doc-processor.service';
-import { AuthService } from './services/auth.service';
+import { AuthService, db } from './services/auth.service';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { AppStep, OptimizationResult, CompanyConfig, HistoryItem } from './types';
 import { JobInputComponent } from './components/job-input.component';
 import { ResumeInputComponent } from './components/resume-input.component';
@@ -16,7 +17,7 @@ import { HistoryComponent } from './components/history.component';
   standalone: true,
   imports: [CommonModule, FormsModule, JobInputComponent, ResumeInputComponent, PreviewComponent, HistoryComponent],
   template: `
-<div class="min-h-screen flex flex-col bg-gray-50/50">
+<div id="app-wrapper" class="min-h-screen flex flex-col bg-gray-50/50 transition-colors duration-300">
   <!-- Header -->
   <header class="bg-white/80 backdrop-blur-lg border-b border-gray-200/80 shadow-sm z-30 print:hidden sticky top-0">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -57,23 +58,45 @@ import { HistoryComponent } from './components/history.component';
       </nav>
 
       <div class="flex items-center gap-4">
-        @if (auth.user()) {
-            <span class="text-xs text-gray-500 hidden sm:block truncate max-w-[120px]">{{ auth.user()?.email }}</span>
-            <button (click)="logout()" class="text-sm text-gray-500 hover:text-gray-700 font-medium">Logout</button>
-        } @else {
-            <button (click)="login()" class="text-sm bg-blue-50 text-blue-600 hover:bg-blue-100 px-3 py-1.5 rounded-lg font-medium transition-colors">Sign In</button>
-        }
-
-        <button (click)="toggleHistory()" class="text-sm font-semibold text-blue-500 hover:text-blue-600 flex items-center gap-1">
+        <button (click)="toggleHistory()" class="text-sm font-semibold text-gray-600 hover:text-gray-900 flex items-center gap-1 transition-colors">
           <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          {{ step() === 'history' ? 'Close' : 'History' }}
+          {{ step() === 'history' ? 'Close History' : 'History' }}
         </button>
 
-        <button (click)="reset()" class="text-sm text-blue-500 hover:text-blue-600 font-semibold">
-          Start Over
+        <div class="h-6 w-px bg-gray-200"></div>
+        
+        <!-- Dark Mode Toggle -->
+        <button (click)="toggleDarkMode()" class="text-gray-500 hover:text-gray-900 transition-colors bg-gray-100 p-1.5 rounded-full" title="Toggle Dark Mode">
+          @if (isDarkMode()) {
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+          } @else {
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+              </svg>
+          }
         </button>
+
+        <div class="h-6 w-px bg-gray-200"></div>
+
+        @if (auth.user()) {
+            <div class="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-full pl-1 pr-3 py-1 shadow-sm hover:bg-gray-100 transition-colors">
+                @if (auth.user()?.photoURL) {
+                    <img [src]="auth.user()?.photoURL" alt="Profile" class="h-7 w-7 rounded-full object-cover">
+                } @else {
+                    <div class="h-7 w-7 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-xs">
+                        {{ auth.user()?.email?.charAt(0)?.toUpperCase() || 'U' }}
+                    </div>
+                }
+                <span class="text-xs text-gray-700 hidden sm:block truncate max-w-[120px] font-medium">{{ auth.user()?.email }}</span>
+                <button (click)="logout()" class="text-xs text-red-500 hover:text-red-700 font-semibold ml-1" title="Sign Out">Logout</button>
+            </div>
+        } @else {
+            <button (click)="login()" class="text-sm bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg font-medium shadow-sm transition-colors">Sign In</button>
+        }
       </div>
     </div>
   </header>
@@ -82,6 +105,18 @@ import { HistoryComponent } from './components/history.component';
   <main class="flex-grow">
     <div class="max-w-5xl mx-auto py-12 px-4 sm:px-6 lg:px-8 space-y-12">
       
+      <!-- Create New Resume Banner -->
+      @if (step() !== 'input-job' || (jobDescription() || '').trim() !== '') {
+          <div class="flex justify-start animate-fade-in mb-4">
+              <button (click)="reset()" class="inline-flex items-center px-4 py-2 border border-blue-200 shadow-sm text-sm font-bold rounded-lg text-blue-700 bg-blue-50 hover:bg-blue-100 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                  </svg>
+                  Create New Resume
+              </button>
+          </div>
+      }
+
       <!-- Step 1: Job Input -->
       <section id="input-job" class="scroll-mt-24 transition-all duration-500" [class.opacity-50]="step() !== 'input-job' && step() !== 'history'">
         <app-job-input [initialText]="jobDescription()" (submitJob)="handleJobSubmit($event)"></app-job-input>
@@ -90,6 +125,8 @@ import { HistoryComponent } from './components/history.component';
       <!-- Step 2: Resume Input -->
       <section id="input-resume" class="scroll-mt-24 transition-all duration-500" [class.opacity-50]="step() !== 'input-resume' && step() !== 'history'">
         <app-resume-input 
+            [initialCompanyConfigs]="companyConfigs()"
+            [initialExtractedSections]="extractedSections()"
             (submitResume)="handleResumeSubmit($event)" 
             (resetApp)="reset()"
             [error]="error()">
@@ -113,7 +150,10 @@ import { HistoryComponent } from './components/history.component';
         [versions]="versions()"
         [currentVersionIndex]="currentVersionIndex()"
         (reoptimize)="handleReoptimize($event)"
-        (versionChange)="handleVersionChange($event)">
+        (regenerateSection)="handleRegenerateSection($event)"
+        (versionChange)="handleVersionChange($event)"
+        (versionDelete)="handleVersionDelete($event)"
+        (coverLetterUpdate)="handleCoverLetterUpdate($event)">
       </app-preview>
 
       <!-- History View (Modal-like) -->
@@ -168,11 +208,14 @@ export class AppComponent {
   currentVersionIndex = signal<number>(-1);
   isLoading = signal<boolean>(false);
   error = signal<string | null>(null);
+  isDarkMode = signal<boolean>(false);
 
   private geminiService = inject(GeminiService);
   private historyService = inject(HistoryService);
   private docService = inject(DocProcessorService);
   public auth = inject(AuthService);
+
+  private isCloudStateRestored = false;
 
   constructor() {
       // Load saved instructions
@@ -183,6 +226,13 @@ export class AppComponent {
       const savedCL = localStorage.getItem('custom_cl_instructions');
       if (savedCL) {
           this.coverLetterInstructions.set(savedCL);
+      }
+
+      // Dark Mode setup
+      const savedTheme = localStorage.getItem('resume_tailor_theme');
+      if (savedTheme === 'dark') {
+          this.isDarkMode.set(true);
+          document.documentElement.classList.add('dark');
       }
 
       // Load persisted state
@@ -200,6 +250,7 @@ export class AppComponent {
             if (state.optimizationResult) this.optimizationResult.set(state.optimizationResult);
             if (state.versions) this.versions.set(state.versions);
             if (state.currentVersionIndex !== undefined) this.currentVersionIndex.set(state.currentVersionIndex);
+            if (state.extractedSections) this.extractedSections.set(state.extractedSections);
             
             // Restore step last to ensure data is ready
             if (state.step) {
@@ -214,7 +265,7 @@ export class AppComponent {
           console.error('Failed to load state', e);
       }
 
-      // Auto-save state
+      // Auto-save state to local AND cloud
       effect(() => {
           const state = {
               step: this.step(),
@@ -226,18 +277,77 @@ export class AppComponent {
               coverLetterInstructions: this.coverLetterInstructions(),
               optimizationResult: this.optimizationResult(),
               versions: this.versions(),
-              currentVersionIndex: this.currentVersionIndex()
+              currentVersionIndex: this.currentVersionIndex(),
+              extractedSections: this.extractedSections()
           };
+          
           localStorage.setItem('resume_tailor_state_v1', JSON.stringify(state));
+          
+          // Also persist to cloud if user is logged in
+          const user = this.auth.user();
+          if (user && this.isCloudStateRestored) {
+              // Remove undefined fields which Firestore strictly forbids
+              const cleanedState = JSON.parse(JSON.stringify(state));
+              setDoc(doc(db, 'users', user.uid, 'documents', 'appState'), cleanedState).catch(e => {
+                  console.error('Failed to sync state to cloud', e);
+              });
+          }
       });
       
       // Auto-sync from cloud on auth state change
       effect(() => {
           const user = this.auth.user();
           if (user) {
-              this.docService.syncTemplateFromCloud();
+              // Wrap in async immediately invoked function
+              (async () => {
+                  try {
+                      await this.syncStateFromCloud();
+                      await this.docService.syncTemplateFromCloud();
+                  } catch (e) {
+                      console.error('Initial sync failed', e);
+                  }
+              })();
+          } else {
+              this.isCloudStateRestored = false; 
           }
       });
+  }
+
+  async syncStateFromCloud() {
+      const user = this.auth.user();
+      if (!user) return;
+      try {
+          const snap = await getDoc(doc(db, 'users', user.uid, 'documents', 'appState'));
+          if (snap.exists()) {
+              const state = snap.data();
+              // Prevent reactive interference when bulk-updating from cloud
+              import('@angular/core').then(({ untracked }) => {
+                  untracked(() => {
+                      if (state['jobDescription']) this.jobDescription.set(state['jobDescription']);
+                      if (state['resumeText']) this.resumeText.set(state['resumeText']);
+                      if (state['companyConfigs']) this.companyConfigs.set(state['companyConfigs']);
+                      if (state['integrateSkills'] !== undefined) this.integrateSkills.set(state['integrateSkills']);
+                      if (state['customInstructions']) this.customInstructions.set(state['customInstructions']);
+                      if (state['coverLetterInstructions']) this.coverLetterInstructions.set(state['coverLetterInstructions']);
+                      if (state['optimizationResult']) this.optimizationResult.set(state['optimizationResult']);
+                      if (state['versions']) this.versions.set(state['versions']);
+                      if (state['currentVersionIndex'] !== undefined) this.currentVersionIndex.set(state['currentVersionIndex']);
+                      
+                      if (state['step']) {
+                          if (state['step'] === 'processing') {
+                              this.step.set('input-resume');
+                          } else {
+                              this.step.set(state['step']);
+                          }
+                      }
+                  });
+              });
+          }
+      } catch (e) {
+          console.error("Failed to sync app state from cloud", e);
+      } finally {
+          this.isCloudStateRestored = true;
+      }
   }
 
   scrollToSection(sectionId: string) {
@@ -253,6 +363,7 @@ export class AppComponent {
         await this.auth.loginWithGoogle();
         // Sync templates and settings upon login
         await this.docService.syncTemplateFromCloud();
+        await this.syncStateFromCloud();
     } catch (e) {
         console.error('Login failed', e);
     }
@@ -302,6 +413,61 @@ export class AppComponent {
 
   handleReoptimize(feedback: string) {
     this.startOptimization(feedback);
+  }
+
+  async handleRegenerateSection(event: {type: 'summary' | 'experience' | 'whole', company?: string}) {
+      if (event.type === 'whole') {
+          this.startOptimization(); 
+          return;
+      }
+      
+      this.isLoading.set(true);
+      try {
+          const currentResult = this.optimizationResult();
+          if (!currentResult) return;
+          
+          if (event.type === 'summary') {
+              const newSummary = await this.geminiService.regenerateSummary(this.jobDescription(), this.resumeText(), currentResult.summary, this.customInstructions());
+              if (newSummary) {
+                  const updated = { ...currentResult, summary: newSummary };
+                  this.optimizationResult.set(updated);
+                  
+                  // Update versions array with this new state
+                  const currentVersions = this.versions();
+                  currentVersions.push(updated);
+                  this.versions.set([...currentVersions]);
+                  this.currentVersionIndex.set(currentVersions.length - 1);
+              }
+          } else if (event.type === 'experience' && event.company) {
+              const currentExp = currentResult.experience.find((e: any) => e.company === event.company);
+              if (currentExp) {
+                  const newExp = await this.geminiService.regenerateCompanyExperience(
+                      this.jobDescription(), 
+                      this.resumeText(), 
+                      currentExp, 
+                      this.companyConfigs(), 
+                      this.integrateSkills(), 
+                      this.customInstructions()
+                  );
+                  if (newExp) {
+                      const updatedExp = currentResult.experience.map((e: any) => e.company === event.company ? newExp : e);
+                      const updated = { ...currentResult, experience: updatedExp };
+                      this.optimizationResult.set(updated);
+                      
+                      // Update versions array with this new state
+                      const currentVersions = this.versions();
+                      currentVersions.push(updated);
+                      this.versions.set([...currentVersions]);
+                      this.currentVersionIndex.set(currentVersions.length - 1);
+                  }
+              }
+          }
+      } catch (err: any) {
+          console.error(err);
+          this.error.set(err.message || 'Failed to regenerate section.');
+      } finally {
+          this.isLoading.set(false);
+      }
   }
 
   async startOptimization(feedback?: string) {
@@ -367,9 +533,59 @@ export class AppComponent {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
+  toggleDarkMode() {
+      this.isDarkMode.update(v => !v);
+      if (this.isDarkMode()) {
+          document.documentElement.classList.add('dark');
+          localStorage.setItem('resume_tailor_theme', 'dark');
+      } else {
+          document.documentElement.classList.remove('dark');
+          localStorage.setItem('resume_tailor_theme', 'light');
+      }
+  }
+
   handleVersionChange(index: number) {
     this.currentVersionIndex.set(index);
     this.optimizationResult.set(this.versions()[index]);
+  }
+
+  handleVersionDelete(index: number) {
+      const currentVersions = [...this.versions()];
+      if (currentVersions.length > 1) {
+          currentVersions.splice(index, 1);
+          this.versions.set(currentVersions);
+          
+          let newIndex = this.currentVersionIndex();
+          if (newIndex >= currentVersions.length) {
+              newIndex = currentVersions.length - 1;
+          } else if (index < newIndex) {
+              newIndex--;
+          } else if (index === newIndex && newIndex > 0) {
+              newIndex--;
+          }
+          this.currentVersionIndex.set(newIndex);
+          this.optimizationResult.set(currentVersions[newIndex]);
+          
+          // Optionally save this state update to cloud back?
+          if (this.auth.user()) {
+             const result = currentVersions[newIndex];
+             // history is auto-saved via effect, but deleting might require a cloud sync push
+          }
+      }
+  }
+
+  handleCoverLetterUpdate(cl: string) {
+      const current = this.optimizationResult();
+      if (current) {
+          const updated = { ...current, coverLetter: cl };
+          this.optimizationResult.set(updated);
+          
+          const currentVersions = [...this.versions()];
+          if (this.currentVersionIndex() >= 0) {
+              currentVersions[this.currentVersionIndex()] = updated;
+              this.versions.set(currentVersions);
+          }
+      }
   }
 
   toggleHistory() {

@@ -108,6 +108,16 @@ Masters Degree in Computer Applications, 2013-2016
             </div>
           </div>
 
+          @if (isConfirmingClear()) {
+              <div class="mt-2 bg-red-50 border border-red-200 rounded-lg p-3 flex flex-col sm:flex-row items-center justify-between gap-3">
+                  <p class="text-xs text-red-700 font-medium tracking-tight">Are you sure you want to remove the default template and clear settings?</p>
+                  <div class="flex items-center gap-2">
+                      <button (click)="cancelClearTemplate()" class="text-xs font-medium px-3 py-1.5 rounded bg-white text-gray-600 border border-gray-300 hover:bg-gray-50">Cancel</button>
+                      <button (click)="confirmClearTemplate()" class="text-xs font-medium px-3 py-1.5 rounded bg-red-600 text-white hover:bg-red-700">Confirm Remove</button>
+                  </div>
+              </div>
+          }
+
           @if (masterStyle()) {
             <div class="bg-white/50 rounded-lg p-3 border border-green-100 flex items-center justify-between">
               <div class="flex items-center gap-2">
@@ -374,6 +384,15 @@ export class ResumeInputComponent implements OnInit {
       }
   }>();
   resetApp = output<void>(); // Event to reset the app
+  
+  initialCompanyConfigs = input<CompanyConfig[]>([]);
+  initialExtractedSections = input<{
+      summary?: string, 
+      certifications?: string[], 
+      education?: string[], 
+      workExperienceText?: string
+  }>({});
+
   savedTemplateName = signal<string | undefined>(undefined);
   masterStyle = signal<any | null>(null);
   showText = signal(false);
@@ -404,6 +423,22 @@ export class ResumeInputComponent implements OnInit {
 
   constructor() {
     effect(() => {
+        const configs = this.initialCompanyConfigs();
+        if (configs && configs.length > 0) {
+            this.companyConfigs.set(JSON.parse(JSON.stringify(configs)));
+            // Avoid triggering another analysis
+            this.lastAnalyzedText = this.text().trim();
+        }
+    }, { allowSignalWrites: true });
+
+    effect(() => {
+        const secs = this.initialExtractedSections();
+        if (secs && Object.keys(secs).length > 0) {
+            this.extractedSections.set(JSON.parse(JSON.stringify(secs)));
+        }
+    }, { allowSignalWrites: true });
+
+    effect(() => {
       // Listen to template changes
       const changeId = this.docService.templateChange();
       // Use untracked just in case, but since we are relying on the signal we want it tracked
@@ -433,13 +468,30 @@ export class ResumeInputComponent implements OnInit {
         const savedText = await this.docService.getStoredTemplateText();
         if (savedText && savedText.trim()) {
             this.text.set(savedText);
-            // Use a simple hash of the text for caching
+            this.lastAnalyzedText = savedText;
+            
+            // Check if configs are already restored from parent/cloud
+            if (this.companyConfigs().length > 0 || this.initialCompanyConfigs().length > 0) {
+                // Give effect time to apply if it hasn't already
+                if (this.companyConfigs().length === 0) {
+                     this.companyConfigs.set(JSON.parse(JSON.stringify(this.initialCompanyConfigs())));
+                }
+                
+                const secs = this.initialExtractedSections();
+                if (secs && Object.keys(secs).length > 0 && Object.keys(this.extractedSections()).length === 0) {
+                     this.extractedSections.set(JSON.parse(JSON.stringify(secs)));
+                }
+
+                // Assume analysis is perfectly restored 
+                return;
+            }
+
+            // Fallback: Use a simple hash of the local text for caching
             const textHash = this.simpleHash(savedText);
             const cachedConfigs = localStorage.getItem(`configs_${textHash}`);
             if (cachedConfigs) {
                 try {
                     this.companyConfigs.set(JSON.parse(cachedConfigs));
-                    this.lastAnalyzedText = savedText;
                 } catch (e) {
                     await this.analyzeText();
                 }
@@ -583,6 +635,11 @@ export class ResumeInputComponent implements OnInit {
       this.localError.set('Please upload a .docx file.');
       return;
     }
+    
+    if (file.size > 700 * 1024) {
+      this.localError.set('Warning: This template is larger than 700KB. It will work locally, but unfortunately cannot be synced to the cloud across devices due to size limits.');
+      // Deliberately continue, so they can use it locally if they want
+    }
 
     try {
       await this.docService.saveTemplate(file);
@@ -606,15 +663,24 @@ export class ResumeInputComponent implements OnInit {
     }
   }
 
+  isConfirmingClear = signal<boolean>(false);
+
   async clearTemplate() {
-    if (confirm('Are you sure you want to remove the default template? You will need to upload a new file next time.')) {
-        await this.docService.clearTemplate();
-        this.savedTemplateName.set(undefined);
-        this.text.set('');
-        this.companyConfigs.set([]);
-        this.extractedSections.set({});
-        this.localError.set(null);
-    }
+    this.isConfirmingClear.set(true);
+  }
+  
+  async confirmClearTemplate() {
+    await this.docService.clearTemplate();
+    this.savedTemplateName.set(undefined);
+    this.text.set('');
+    this.companyConfigs.set([]);
+    this.extractedSections.set({});
+    this.localError.set(null);
+    this.isConfirmingClear.set(false);
+  }
+  
+  cancelClearTemplate() {
+    this.isConfirmingClear.set(false);
   }
 
   resetMasterStyle() {

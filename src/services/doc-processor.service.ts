@@ -2,7 +2,8 @@ import { Injectable, inject, signal } from '@angular/core';
 import * as mammoth from 'mammoth/mammoth.browser';
 import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
-import { get, set, setMany, del } from 'idb-keyval';
+import { Document as DocxDocument, Paragraph, TextRun, Packer, HeadingLevel, BorderStyle, AlignmentType } from 'docx';
+import { safeGet, safeSet, safeSetMany, safeDel } from './idb-wrapper';
 import { OptimizationResult, PersonalInfo } from '../types';
 import { AuthService, db } from './auth.service';
 import { doc, getDoc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
@@ -39,8 +40,8 @@ export class DocProcessorService {
   }
 
   async clearLocalTemplate(): Promise<void> {
-      await del(this.TEMPLATE_KEY);
-      await del(this.TEMPLATE_NAME_KEY);
+      await safeDel(this.TEMPLATE_KEY);
+      await safeDel(this.TEMPLATE_NAME_KEY);
       localStorage.removeItem(this.MASTER_STYLE_KEY);
       this.templateChange.update(v => v + 1);
   }
@@ -78,7 +79,7 @@ export class DocProcessorService {
       let retries = 3;
       while (retries > 0) {
           try {
-              await setMany([
+              await safeSetMany([
                   [this.TEMPLATE_KEY, buffer],
                   [this.TEMPLATE_NAME_KEY, file.name]
               ]);
@@ -127,8 +128,8 @@ export class DocProcessorService {
 
   async getTemplateName(): Promise<string | undefined> {
     try {
-        const dbName = await get(this.TEMPLATE_NAME_KEY);
-        if (dbName) return dbName as string;
+        const dbName = await safeGet<string>(this.TEMPLATE_NAME_KEY);
+        if (dbName) return dbName;
     } catch (e) {
         console.warn('Failed to get template name from IndexedDB', e);
     }
@@ -141,30 +142,50 @@ export class DocProcessorService {
      
      try {
          const snap = await getDoc(doc(db, 'users', user.uid, 'documents', 'masterTemplate'));
-         if (snap.exists()) {
+         if (snap.exists() && snap.data()['templateData']) {
              const data = snap.data();
-             if (data['templateData']) {
-                 const buffer = this.base64ToArrayBuffer(data['templateData']);
-                 await setMany([
-                     [this.TEMPLATE_KEY, buffer],
-                     [this.TEMPLATE_NAME_KEY, data['templateName']]
-                 ]);
-                 if (data['masterStyle']) {
-                     localStorage.setItem(this.MASTER_STYLE_KEY, JSON.stringify(data['masterStyle']));
-                 }
-                 this.templateChange.update(v => v + 1);
+             const buffer = this.base64ToArrayBuffer(data['templateData']);
+             await safeSetMany([
+                 [this.TEMPLATE_KEY, buffer],
+                 [this.TEMPLATE_NAME_KEY, data['templateName'] || 'Resume_Template.docx']
+             ]);
+             if (data['masterStyle']) {
+                 localStorage.setItem(this.MASTER_STYLE_KEY, JSON.stringify(data['masterStyle']));
+             }
+             if (data['sectionOrder']) {
+                 localStorage.setItem('resume_section_order', JSON.stringify(data['sectionOrder']));
+             }
+             this.templateChange.update(v => v + 1);
+             return true;
+         } else {
+             // Cloud is empty. If we have local data, let's push it TO the cloud
+             const localBase64 = await this.getTemplateBuffer().then(buf => buf ? this.arrayBufferToBase64(buf) : null);
+             const localName = await this.getTemplateName();
+             if (localBase64 && localName) {
+                 const styleStr = localStorage.getItem(this.MASTER_STYLE_KEY);
+                 const masterStyle = styleStr ? JSON.parse(styleStr) : null;
+                 const sectionOrderStr = localStorage.getItem('resume_section_order');
+                 const sectionOrder = sectionOrderStr ? JSON.parse(sectionOrderStr) : null;
+                 await setDoc(doc(db, 'users', user.uid, 'documents', 'masterTemplate'), {
+                     userId: user.uid,
+                     templateName: localName,
+                     templateData: localBase64,
+                     updatedAt: serverTimestamp(),
+                     masterStyle: masterStyle,
+                     sectionOrder: sectionOrder
+                 });
                  return true;
              }
          }
      } catch (e) {
-         console.error('Failed to sync template from cloud', e);
+         console.error('Failed to sync template to/from cloud', e);
      }
      return false;
   }
 
   async getTemplateBuffer(): Promise<ArrayBuffer | undefined> {
     try {
-        return await get<ArrayBuffer>(this.TEMPLATE_KEY);
+        return await safeGet<ArrayBuffer>(this.TEMPLATE_KEY);
     } catch (e) {
         console.warn('Failed to get template buffer from IndexedDB', e);
         return undefined;
@@ -173,7 +194,7 @@ export class DocProcessorService {
 
   async getStoredTemplateText(): Promise<string | null> {
     try {
-        const buffer = await get<ArrayBuffer>(this.TEMPLATE_KEY);
+        const buffer = await safeGet<ArrayBuffer>(this.TEMPLATE_KEY);
         if (buffer) {
             return this.extractText(buffer);
         }
@@ -366,7 +387,7 @@ export class DocProcessorService {
     let style = this.getMasterStyle();
     if (!style) {
         try {
-            const buffer = await get<ArrayBuffer>(this.TEMPLATE_KEY);
+            const buffer = await safeGet<ArrayBuffer>(this.TEMPLATE_KEY);
             if (buffer) {
                 await this.extractAndSaveMasterStyle(buffer);
                 style = this.getMasterStyle();
@@ -388,10 +409,25 @@ export class DocProcessorService {
     return null;
   }
 
-  updateMasterStyle(updates: any) {
+  async updateMasterStyle(updates: any) {
     const current = this.getMasterStyle() || {};
     const updated = { ...current, ...updates };
     localStorage.setItem(this.MASTER_STYLE_KEY, JSON.stringify(updated));
+    console.log('Update master style:', updated);
+    
+    // Sync style updates back to Firestore
+    const user = this.auth.user();
+    if (user) {
+        try {
+            await setDoc(doc(db, 'users', user.uid, 'documents', 'masterTemplate'), {
+                userId: user.uid,
+                masterStyle: updated,
+                updatedAt: serverTimestamp()
+            }, { merge: true });
+        } catch(e) {
+            console.error('Failed to sync updated master style to cloud', e);
+        }
+    }
   }
 
   extractRawFormatDetails(arrayBuffer: ArrayBuffer): any {
@@ -604,8 +640,10 @@ export class DocProcessorService {
     data: OptimizationResult, 
     sectionTitles: {[key: string]: string}
   ): Promise<Blob | null> {
-    const templateBuffer = await get<ArrayBuffer>(this.TEMPLATE_KEY);
-    if (!templateBuffer) return null;
+    const templateBuffer = await safeGet<ArrayBuffer>(this.TEMPLATE_KEY);
+    if (!templateBuffer) {
+        return null; // Let the caller complain that template is missing
+    }
 
     try {
       const zip = new PizZip(templateBuffer);
@@ -1027,13 +1065,34 @@ export class DocProcessorService {
   }
 
   private findIndex(paras: Element[], headers: (string | undefined)[]): number {
-      const validHeaders = headers.filter(h => !!h) as string[];
+      const validHeaders = headers.filter(h => !!h).map(h => h.trim().toLowerCase());
       for (let i = 0; i < paras.length; i++) {
-          const t = paras[i].textContent || "";
-          if (validHeaders.some(h => t.toLowerCase().includes(h.toLowerCase()) && t.length < 50)) {
-              return i;
+          const t = (paras[i].textContent || "").trim();
+          const tLower = t.toLowerCase();
+          
+          if (t.length > 0 && t.length < 50) {
+              // 1. Exact match or very close (e.g. "Experience", "Work Experience:")
+              const stripped = tLower.replace(/[^a-z ]/g, '').trim();
+              if (validHeaders.some(h => stripped === h || stripped === `${h}s` || stripped === h.replace(/s$/, ''))) {
+                  return i;
+              }
+              // 2. Starts with and appears to be a heading (few words, no sentence structure)
+              if (t.split(' ').length <= 4 && validHeaders.some(h => tLower.startsWith(h) || tLower.endsWith(h))) {
+                 return i;
+              }
           }
-      }
+       }
+       
+       // Fallback to old behavior if nothing stricter matched, but ensure it doesn't look like a long sentence
+       for (let i = 0; i < paras.length; i++) {
+           const t = (paras[i].textContent || "").trim();
+           if (t.length > 0 && t.length < 40 && t.split(' ').length <= 5 && !t.endsWith('.')) {
+               if (validHeaders.some(h => t.toLowerCase().includes(h.toLowerCase()))) {
+                   return i;
+               }
+           }
+       }
+       
       return -1;
   }
   
@@ -1150,8 +1209,10 @@ export class DocProcessorService {
 
   async generateCoverLetterDoc(data: OptimizationResult, content: string): Promise<Blob> {
     try {
-      const buffer = await get<ArrayBuffer>(this.TEMPLATE_KEY);
-      if (!buffer) throw new Error("No template found");
+      const buffer = await safeGet<ArrayBuffer>(this.TEMPLATE_KEY);
+      if (!buffer) {
+          throw new Error("No template found. Please ensure your template is uploaded in the Settings tab.");
+      }
 
       const zip = new PizZip(buffer);
       const docXml = zip.file("word/document.xml")?.asText();
@@ -1246,20 +1307,35 @@ export class DocProcessorService {
             // We iterate backwards to avoid index shifting issues with removeChild
             for (let i = endIdx - 1; i > startIdx; i--) {
                 const p = allParas[i];
-                if (p && p.parentNode === parent) {
+                if (!p) continue;
+                
+                if (p.parentNode === parent) {
                     parent.removeChild(p);
+                } else {
+                    // Paragraph is in a different structural parent (e.g., a table cell).
+                    // Removing the <w:p> entirely might leave the container empty, violating DOCX schema.
+                    // Instead, we strip all text runs from it so the dummy text vanishes.
+                    const w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+                    const runs = Array.from(p.getElementsByTagNameNS(w, "r"));
+                    runs.forEach(r => {
+                        if (r.parentNode) r.parentNode.removeChild(r);
+                    });
                 }
             }
             
             if (removeAllContent) {
                 if (headerPara.parentNode === parent) {
                     parent.removeChild(headerPara);
+                } else {
+                     const w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+                     const runs = Array.from(headerPara.getElementsByTagNameNS(w, "r"));
+                     runs.forEach(r => {
+                         if (r.parentNode) r.parentNode.removeChild(r);
+                     });
                 }
                 return;
             }
 
-            // Insert new nodes after the header
-            // IMPORTANT: Capture insertPoint AFTER removal, as the previous nextSibling might have been removed
             let insertPoint = headerPara.nextSibling;
             newNodes.forEach(n => {
                 parent.insertBefore(n, insertPoint);

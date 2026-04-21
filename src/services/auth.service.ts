@@ -1,6 +1,6 @@
 import { Injectable, signal } from '@angular/core';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -17,10 +17,22 @@ export class AuthService {
   loading = signal<boolean>(true);
 
   constructor() {
-    onAuthStateChanged(auth, (user) => {
-      this.user.set(user);
-      this.loading.set(false);
-    });
+    // Explicitly set persistence to ensure token survives reloads in the preview environment
+    setPersistence(auth, browserLocalPersistence)
+      .then(() => {
+        onAuthStateChanged(auth, (user) => {
+          this.user.set(user);
+          this.loading.set(false);
+        });
+      })
+      .catch((error) => {
+        console.error("Auth persistence error:", error);
+        // Fallback to regular listener
+        onAuthStateChanged(auth, (user) => {
+          this.user.set(user);
+          this.loading.set(false);
+        });
+      });
   }
 
   async loginWithGoogle() {
@@ -29,7 +41,8 @@ export class AuthService {
       prompt: 'select_account'
     });
     try {
-      await signInWithPopup(auth, provider);
+      const result = await signInWithPopup(auth, provider);
+      this.user.set(result.user);
     } catch (error) {
       console.error('Google login failed', error);
       throw error;

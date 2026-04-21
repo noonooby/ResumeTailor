@@ -4,6 +4,8 @@ import { FormsModule } from '@angular/forms';
 import { OptimizationResult } from '../types';
 import { DocProcessorService } from '../services/doc-processor.service';
 import { GeminiService } from '../services/gemini.service';
+import { AuthService, db } from '../services/auth.service';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 declare var html2pdf: any;
 
@@ -44,24 +46,34 @@ declare var html2pdf: any;
         position: absolute;
         left: -40px;
         right: -40px;
-        height: 40px;
-        background: #f9fafb;
+        height: 60px;
+        background: #e2e8f0; /* Matches resume-container to create illusion of separate boxes */
         pointer-events: none;
         z-index: 20;
         display: flex;
+        flex-direction: column;
         align-items: center;
         justify-content: center;
-        border-top: 1px solid #e5e7eb;
-        border-bottom: 1px solid #e5e7eb;
     }
+    
+    .page-break-shadow-top {
+        position: absolute;
+        top: -1px; left: 40px; right: 40px; height: 1px;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+    }
+    .page-break-shadow-bottom {
+        position: absolute;
+        bottom: -1px; left: 40px; right: 40px; height: 1px;
+        box-shadow: 0 -5px 15px rgba(0,0,0,0.1);
+    }
+
     .page-break-label {
-        background: #94a3b8;
-        color: white;
-        font-size: 10px;
-        padding: 2px 10px;
-        border-radius: 9999px;
-        font-weight: bold;
-        letter-spacing: 0.1em;
+        color: #64748b;
+        font-size: 12px;
+        padding: 4px 16px;
+        font-weight: 700;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
     }
     
     input.editable-header {
@@ -136,18 +148,39 @@ declare var html2pdf: any;
         <!-- Version Switcher -->
         @if (versions().length > 1) {
             <div class="flex items-center gap-2 mb-4 bg-white p-2 rounded-lg border border-gray-200 shadow-sm w-fit">
-                <span class="text-xs font-bold text-gray-400 uppercase tracking-wider px-2">Versions</span>
-                <div class="flex gap-1">
+                <div class="flex flex-col">
+                    <span class="text-xs font-bold text-gray-400 uppercase tracking-wider px-2">Versions</span>
+                    <span class="text-[8px] text-gray-400 px-2 leading-none">(Right click to delete)</span>
+                </div>
+                <div class="flex gap-1 ml-2 relative">
                     @for (v of versions(); track $index) {
-                        <button 
-                            (click)="versionChange.emit($index)"
-                            [class.bg-blue-500]="currentVersionIndex() === $index"
-                            [class.text-white]="currentVersionIndex() === $index"
-                            [class.bg-gray-100]="currentVersionIndex() !== $index"
-                            [class.text-gray-600]="currentVersionIndex() !== $index"
-                            class="w-8 h-8 rounded-md text-xs font-bold transition-all hover:scale-105">
-                            {{ $index + 1 }}
-                        </button>
+                        <div class="relative">
+                            <button 
+                                (click)="versionChange.emit($index)"
+                                (contextmenu)="$event.preventDefault(); handleContextMenu($event, $index)"
+                                [class.bg-blue-500]="currentVersionIndex() === $index"
+                                [class.text-white]="currentVersionIndex() === $index"
+                                [class.bg-gray-100]="currentVersionIndex() !== $index"
+                                [class.text-gray-600]="currentVersionIndex() !== $index"
+                                class="w-8 h-8 rounded-md text-xs font-bold transition-all hover:scale-105"
+                                title="Right click to delete">
+                                {{ $index + 1 }}
+                            </button>
+                            
+                            @if (contextMenuVisibleForVersion() === $index) {
+                                <div class="absolute top-10 left-0 bg-white border border-gray-200 shadow-xl rounded-md z-50 overflow-hidden w-24">
+                                    <button 
+                                        (click)="confirmDelete($index)"
+                                        class="w-full text-left px-3 py-2 text-xs font-bold text-red-600 hover:bg-red-50 flex items-center gap-1 transition-colors">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                        </svg>
+                                        Delete
+                                    </button>
+                                </div>
+                                <div class="fixed inset-0 z-40" (click)="contextMenuVisibleForVersion.set(null)" (contextmenu)="$event.preventDefault(); contextMenuVisibleForVersion.set(null)"></div>
+                            }
+                        </div>
                     }
                 </div>
             </div>
@@ -291,8 +324,45 @@ declare var html2pdf: any;
 
         @if (activeTab() === 'resume') {
             <!-- Actions -->
-            <div class="flex gap-2 ml-auto mb-4">
-                <button (click)="downloadDoc()" [disabled]="isLoading() || !data()" class="inline-flex items-center px-3 py-1.5 border border-transparent shadow-sm text-xs font-bold uppercase tracking-wide rounded text-white bg-blue-600 hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+            <div class="flex flex-wrap items-center justify-end gap-2 mb-4 relative z-50">
+                
+                <!-- Regenerate Options Dropdown -->
+                <div class="relative inline-block text-left">
+                    <button type="button" (click)="showRegenerateMenu.set(!showRegenerateMenu())" [disabled]="isLoading() || !data()" class="inline-flex items-center px-4 py-2 border border-indigo-200 shadow-sm text-xs font-bold tracking-wide rounded-lg text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed uppercase">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                        Regenerate Match
+                        <svg class="-mr-1 ml-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                            <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                        </svg>
+                    </button>
+
+                    @if (showRegenerateMenu()) {
+                        <div class="origin-top-right absolute right-0 mt-2 w-56 rounded-xl shadow-lg bg-white ring-1 ring-black ring-opacity-5 divide-y divide-gray-100 focus:outline-none overflow-hidden z-50 animate-fade-in-up">
+                            <div class="py-1">
+                                <button (click)="regenerateSection.emit({type: 'whole'}); showRegenerateMenu.set(false)" class="w-full text-left px-4 py-2.5 text-sm font-semibold text-gray-900 hover:bg-indigo-50 hover:text-indigo-700 flex items-center transition-colors">
+                                    <svg class="w-4 h-4 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                                    Regenerate Whole Resume
+                                </button>
+                                <button (click)="regenerateSection.emit({type: 'summary'}); showRegenerateMenu.set(false)" class="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center transition-colors">
+                                    <svg class="w-4 h-4 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                                    Rewrite Summary Only
+                                </button>
+                            </div>
+                            <div class="py-1">
+                                <p class="px-4 py-2 text-xs font-bold tracking-wider text-gray-400 uppercase">Regenerate By Company</p>
+                                @for (exp of data()?.experience || []; track exp.company; let i = $index) {
+                                    <button (click)="regenerateSection.emit({type: 'experience', company: exp.company}); showRegenerateMenu.set(false)" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 truncate transition-colors flex items-center">
+                                        <div class="w-1.5 h-1.5 rounded-full bg-gray-300 mr-2"></div>
+                                        {{ exp.company }}
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <button (click)="downloadDoc()" [disabled]="isLoading() || !data()" class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-xs font-bold uppercase tracking-wide rounded-lg text-white bg-blue-600 hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
                     Export Resume (.DOCX)
                 </button>
             </div>
@@ -308,8 +378,10 @@ declare var html2pdf: any;
                     [style.padding-right.mm]="masterStyle()?.margins?.right || 19">
                 
                 <!-- Page Break Indicators -->
-                <div class="page-break-line print:hidden" style="top: 297mm;">
+                <div class="page-break-line no-invert print:hidden" style="top: 297mm;">
+                    <div class="page-break-shadow-top"></div>
                     <span class="page-break-label">PAGE 2</span>
+                    <div class="page-break-shadow-bottom"></div>
                 </div>
                 
                 @if (data()) {
@@ -486,7 +558,8 @@ declare var html2pdf: any;
 
                             <!-- Content Area (Editable BODY ONLY) -->
                             <textarea 
-                                [(ngModel)]="coverLetterContent" 
+                                [ngModel]="coverLetterContent()"
+                                (ngModelChange)="coverLetterContent.set($event); coverLetterUpdate.emit($event)"
                                 class="cl-textarea text-justify text-black whitespace-pre-wrap"
                                 rows="15"
                             ></textarea>
@@ -531,8 +604,24 @@ export class PreviewComponent implements OnInit, AfterViewInit, OnDestroy {
   versions = input<OptimizationResult[]>([]);
   currentVersionIndex = input<number>(-1);
   reoptimize = output<string>();
+  regenerateSection = output<{type: 'summary' | 'experience' | 'whole', company?: string}>();
   versionChange = output<number>();
+  versionDelete = output<number>();
+  coverLetterUpdate = output<string>();
   feedbackInput = signal('');
+  
+  // Dropdown States
+  showRegenerateMenu = signal(false);
+  contextMenuVisibleForVersion = signal<number | null>(null);
+  
+  handleContextMenu(event: MouseEvent, index: number) {
+      this.contextMenuVisibleForVersion.set(index);
+  }
+
+  confirmDelete(index: number) {
+      this.versionDelete.emit(index);
+      this.contextMenuVisibleForVersion.set(null);
+  }
   
   // Error State
   errorMessage = signal<string | null>(null);
@@ -645,18 +734,29 @@ export class PreviewComponent implements OnInit, AfterViewInit, OnDestroy {
       this.docService.updateMasterStyle(updated);
   }
 
+  private authService = inject(AuthService);
+
   saveConfigs() {
-      localStorage.setItem('resume_section_order', JSON.stringify(this.sections()));
+      const orderJson = JSON.stringify(this.sections());
+      localStorage.setItem('resume_section_order', orderJson);
+      
+      const user = this.authService.user();
+      if (user) {
+          setDoc(doc(db, 'users', user.uid, 'documents', 'masterTemplate'), {
+              userId: user.uid,
+              sectionOrder: this.sections(),
+              updatedAt: serverTimestamp()
+          }, { merge: true }).catch(console.error);
+      }
   }
   
   constructor() {
       effect(() => { this.saveConfigs(); });
       effect(() => {
-          const cl = this.data()?.coverLetter;
-          if (cl) {
-              this.coverLetterContent.set(cl);
-          }
-      });
+          const data = this.data();
+          if (data) Object.assign(this, { _tempDataRef: data }); // force ref tracking
+          this.coverLetterContent.set(data?.coverLetter || '');
+      }, { allowSignalWrites: true });
   }
 
   toggleJd() { this.showJd.update(v => !v); }
@@ -725,6 +825,7 @@ export class PreviewComponent implements OnInit, AfterViewInit, OnDestroy {
           
           const cl = await this.geminiService.generateCoverLetter(this.jobDescription(), context, this.data()?.personalInfo || {} as any);
           this.coverLetterContent.set(cl);
+          this.coverLetterUpdate.emit(cl);
       } catch(e: any) {
           console.error(e);
           this.errorMessage.set(e.message || 'Failed to generate cover letter.');

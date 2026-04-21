@@ -36,12 +36,13 @@ service cloud.firestore {
     }
 
     function isValidUserTemplate(data, uid) {
-      return data.keys().hasAll(['userId', 'templateName', 'updatedAt'])
+      return data.keys().hasAll(['userId', 'updatedAt'])
         && data.userId == uid
-        && data.templateName is string && data.templateName.size() <= 500
-        && ( !data.keys().hasAny(['templateData']) || (data.templateData is string && data.templateData.size() <= 1000000) ) // Up to 1MB base64
+        && ( !data.keys().hasAny(['templateName']) || data.templateName is string )
+        && ( !data.keys().hasAny(['templateData']) || (data.templateData is string && data.templateData.size() <= 1000000) ) 
         && data.updatedAt is timestamp
-        && ( !data.keys().hasAny(['masterStyle']) || data.masterStyle is map );
+        && ( !data.keys().hasAny(['masterStyle']) || data.masterStyle == null || data.masterStyle is map )
+        && ( !data.keys().hasAny(['sectionOrder']) || data.sectionOrder == null || data.sectionOrder is list );
     }
 
     // Rules
@@ -64,6 +65,11 @@ service cloud.firestore {
         allow create: if isOwner(userId) && isValidId(userId) && isValidUserTemplate(incoming(), userId) && incoming().updatedAt == request.time;
         allow update: if isOwner(userId) && isValidId(userId) && isValidUserTemplate(incoming(), userId) && incoming().userId == existing().userId && incoming().updatedAt == request.time;
         allow delete: if isOwner(userId);
+      }
+      
+      match /documents/appState {
+        allow read: if isOwner(userId);
+        allow write: if isOwner(userId);
       }
     }
   }

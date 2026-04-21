@@ -19,7 +19,25 @@
       body {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
         background-color: #f8f9fa;
+        transition: background-color 0.3s;
       }
+      
+      /* Dark Mode Global Filter Setup */
+      html.dark body {
+        background-color: #111827;
+      }
+      html.dark #app-wrapper {
+        filter: invert(1) hue-rotate(180deg);
+      }
+      /* Revert specific elements so they display correctly */
+      html.dark img, 
+      html.dark svg,
+      html.dark #resume-content, 
+      html.dark #cl-content,
+      html.dark .no-invert {
+        filter: invert(1) hue-rotate(180deg);
+      }
+
       /* Print specific styles for the Resume Preview */
       @media print {
         body * {

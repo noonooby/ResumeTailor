@@ -171,7 +171,7 @@ export class GeminiService {
       companies: string[] 
   }> {
     const extractPromise = this.doExtractMetadata(resumeText);
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Analysis timed out. Please try again.')), 30000));
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Analysis timed out. Please try again.')), 120000));
     return Promise.race([extractPromise, timeoutPromise]) as Promise<any>;
   }
 
@@ -201,7 +201,8 @@ export class GeminiService {
             Analyze the following resume text. 
             1. Identify and separate the resume into its logical sections: summary, certifications, work experience, and education.
             2. Keep these sections in memory and return them in the response.
-            3. From the identified work experience section, extract a list of distinct Company Names.
+            3. From the identified work experience section, extract a list of distinct Company Names. 
+               - CRITICAL: Extract ONLY the pure company name. Do NOT include the job title, role, or dates in this list.
             
             Resume Text:
             "${resumeText.substring(0, 10000)}" 
@@ -228,6 +229,119 @@ export class GeminiService {
     }
   }
   
+  async regenerateSummary(jobDescription: string, resumeText: string, currentSummary: string, customInstructions?: string): Promise<string> {
+    try {
+        const ai = this.getClient();
+        const model = 'gemini-3.1-pro-preview';
+        
+        const systemPrompt = customInstructions || DEFAULT_INSTRUCTIONS;
+        
+        const prompt = `
+            ${systemPrompt}
+            
+            You are an expert resume writer. I need you to rewrite ONLY the professional summary for a resume.
+            Read the Target Job Description and the Original Resume carefully.
+            The user didn't like the previous summary you generated. You need to write a NEW, highly engaging, 3-4 sentence summary that is better tailored, more punchy, and highly relevant.
+            
+            Target Job Description:
+            ${jobDescription}
+            
+            Original Resume:
+            ${resumeText.substring(0, 8000)}
+            
+            Previous Summary (Do not just repeat this, write something fresh):
+            ${currentSummary}
+            
+            Return ONLY the raw plain text of the new summary. No markdown formatting, no JSON, no quotes around it.
+        `;
+
+        const response = await ai.models.generateContent({
+            model,
+            contents: prompt,
+        });
+
+        if (!response.text) throw new Error('Empty response from AI');
+        return response.text.trim();
+    } catch (error) {
+        this.handleError(error, 'Regenerate Summary');
+    }
+  }
+
+  async regenerateCompanyExperience(
+      jobDescription: string, 
+      resumeText: string, 
+      companyExperience: any, 
+      configs: CompanyConfig[],
+      integrateSkills: boolean,
+      customInstructions?: string
+  ): Promise<any> {
+      try {
+          const ai = this.getClient();
+          const model = 'gemini-3.1-pro-preview';
+          
+          const schema = {
+              type: Type.OBJECT,
+              properties: {
+                  title: { type: Type.STRING },
+                  company: { type: Type.STRING },
+                  period: { type: Type.STRING },
+                  description: { type: Type.STRING },
+                  achievements: { type: Type.ARRAY, items: { type: Type.STRING } }
+              },
+              required: ['title', 'company', 'period', 'description', 'achievements']
+          };
+
+          const configText = configs.map(c => `- For ${c.name}, generate exactly ${c.bulletCount} bullet points.`).join('\n');
+          const skillInstruction = integrateSkills
+            ? "Integrate relevant soft and hard skills directly into the bullet points organically."
+            : "Keep skills separate in the Skills section.";
+          const systemPrompt = customInstructions || DEFAULT_INSTRUCTIONS;
+
+          const prompt = `
+              ${systemPrompt}
+              
+              You are an expert resume writer. The user wants to regenerate the work experience bullets specifically for the company: "${companyExperience.company}".
+              Write highly impactful, quantified, action-oriented bullet points tailored to the target job description.
+              Use the original resume context. Make this new version distinct and better than the previous one.
+              
+              CRITICAL CONSTRAINTS:
+              - STRICT SCHEMA ADHERENCE: You must cleanly separate the "company", "title", and "period" into their respective JSON fields. 
+              - Do NOT combine the company, role, and period into a single string. 
+              - For example: "company": "Apple", "title": "Senior Engineer", "period": "2020-2024". DO NOT output "company": "Apple - Senior Engineer - 2020-2024".
+              ${configText}
+              ${skillInstruction}
+              
+              Target Job Description:
+              ${jobDescription}
+              
+              Original Resume:
+              ${resumeText.substring(0, 8000)}
+              
+              Previous Version for ${companyExperience.company}:
+              ${JSON.stringify(companyExperience, null, 2)}
+          `;
+
+          const response = await ai.models.generateContent({
+              model,
+              contents: prompt,
+              config: { 
+                  responseMimeType: 'application/json', 
+                  responseSchema: schema
+              }
+          });
+
+          if (!response.text) throw new Error('Empty response from AI');
+          
+          try {
+              return JSON.parse(response.text);
+          } catch (e) {
+              return JSON.parse(jsonrepair(response.text));
+          }
+      } catch (error) {
+          this.handleError(error, 'Regenerate Company Experience');
+      }
+  }
+
   async extractJobDescriptionFromHtml(html: string): Promise<string> {
     try {
         // 1. Try to find SEO metadata (JSON-LD) first. 
@@ -417,6 +531,13 @@ export class GeminiService {
             - Do not add locations, countries, or any other information if it is not present in the original text.
             - Keep the formatting as simple and close to the original as possible.
             - For education, map the original text to the schema fields as best as possible without adding new information.
+
+            ---
+            
+            EXPERIENCE FORMATTING (CRITICAL):
+            - STRICT SCHEMA ADHERENCE: You must cleanly separate the "company", "title", and "period" into their respective JSON fields. 
+            - Do NOT combine the company, role, and period into a single string. 
+            - For example: "company": "Apple", "title": "Senior Engineer", "period": "2020-2024". DO NOT output "company": "Apple - Senior Engineer - 2020-2024".
 
             ---
             

@@ -1,5 +1,5 @@
 import { Injectable, inject } from '@angular/core';
-import { get, set } from 'idb-keyval';
+import { safeGet, safeSet } from './idb-wrapper';
 import { OptimizationResult, HistoryItem } from '../types';
 import { AuthService, db } from './auth.service';
 import { collection, doc, getDocs, setDoc, deleteDoc, query, orderBy, getDoc, serverTimestamp } from 'firebase/firestore';
@@ -41,7 +41,7 @@ export class HistoryService {
     
     // Fallback or unauthenticated
     try {
-        return (await get<HistoryItem[]>(this.KEY)) || [];
+        return (await safeGet<HistoryItem[]>(this.KEY)) || [];
     } catch (e) {
         console.warn('Failed to get history from IndexedDB', e);
         return [];
@@ -79,7 +79,7 @@ export class HistoryService {
     let retries = 3;
     while (retries > 0) {
         try {
-            await set(this.KEY, history);
+            await safeSet(this.KEY, history);
             break;
         } catch (e) {
             console.warn(`Failed to save history to IndexedDB (retries left: ${retries - 1})`, e);
@@ -109,7 +109,7 @@ export class HistoryService {
     const history = await this.getHistory();
     const filtered = history.filter(h => h.id !== id);
     try {
-        await set(this.KEY, filtered);
+        await safeSet(this.KEY, filtered);
     } catch (e) {
         console.warn('Failed to delete history from IndexedDB', e);
     }
@@ -136,7 +136,7 @@ export class HistoryService {
     }
 
     try {
-        await set(this.KEY, []);
+        await safeSet(this.KEY, []);
     } catch (e) {
         console.warn('Failed to clear history from IndexedDB', e);
     }
