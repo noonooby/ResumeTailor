@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DocProcessorService } from '../services/doc-processor.service';
 import { GeminiService, DEFAULT_INSTRUCTIONS, DEFAULT_COVER_LETTER_INSTRUCTIONS } from '../services/gemini.service';
+import { AuthService } from '../services/auth.service';
 import { CompanyConfig } from '../types';
 
 const DEFAULT_RESUME_TEXT = `RITHUL RAPHEL
@@ -139,7 +140,15 @@ Masters Degree in Computer Applications, 2013-2016
       <input #fileInput type="file" class="sr-only" accept=".docx" (change)="onFileSelected($event)">
 
       <!-- File Input -->
-      @if (!savedTemplateName()) {
+      @if (!auth.user()) {
+        <div class="mb-6 p-6 border-2 border-dashed border-gray-300 rounded-lg text-center bg-gray-50">
+           <svg xmlns="http://www.w3.org/2000/svg" class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+           </svg>
+           <h3 class="mt-2 text-sm font-medium text-gray-900">Authentication Required</h3>
+           <p class="mt-1 text-sm text-gray-500">Please log in to upload and save custom template structures.</p>
+        </div>
+      } @else if (!savedTemplateName()) {
         <div class="mb-6">
           <div class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg hover:border-blue-400 transition-colors"
                [class.border-blue-500]="isDragging"
@@ -383,6 +392,7 @@ export class ResumeInputComponent implements OnInit {
           workExperienceText?: string
       }
   }>();
+  instructionsChange = output<{customInstructions: string, coverLetterInstructions: string}>();
   resetApp = output<void>(); // Event to reset the app
   
   initialCompanyConfigs = input<CompanyConfig[]>([]);
@@ -392,6 +402,8 @@ export class ResumeInputComponent implements OnInit {
       education?: string[], 
       workExperienceText?: string
   }>({});
+  initialCustomInstructions = input<string | undefined>(undefined);
+  initialCoverLetterInstructions = input<string | undefined>(undefined);
 
   savedTemplateName = signal<string | undefined>(undefined);
   masterStyle = signal<any | null>(null);
@@ -418,6 +430,7 @@ export class ResumeInputComponent implements OnInit {
 
   private lastAnalyzedText = '';
 
+  public auth = inject(AuthService);
   private docService = inject(DocProcessorService);
   private geminiService = inject(GeminiService);
 
@@ -436,6 +449,13 @@ export class ResumeInputComponent implements OnInit {
         if (secs && Object.keys(secs).length > 0) {
             this.extractedSections.set(JSON.parse(JSON.stringify(secs)));
         }
+    }, { allowSignalWrites: true });
+
+    effect(() => {
+        const custom = this.initialCustomInstructions();
+        if (custom) this.promptInstructions.set(custom);
+        const clCustom = this.initialCoverLetterInstructions();
+        if (clCustom) this.clPromptInstructions.set(clCustom);
     }, { allowSignalWrites: true });
 
     effect(() => {
@@ -560,12 +580,20 @@ export class ResumeInputComponent implements OnInit {
   savePrompt() {
       localStorage.setItem('custom_ai_instructions', this.promptInstructions());
       localStorage.setItem('custom_cl_instructions', this.clPromptInstructions());
+      this.instructionsChange.emit({
+          customInstructions: this.promptInstructions(),
+          coverLetterInstructions: this.clPromptInstructions()
+      });
   }
 
   resetPrompt() {
       if(confirm('Are you sure you want to reset the Resume instructions to the original defaults? Your custom changes will be lost.')) {
         this.promptInstructions.set(DEFAULT_INSTRUCTIONS);
         localStorage.removeItem('custom_ai_instructions');
+        this.instructionsChange.emit({
+          customInstructions: DEFAULT_INSTRUCTIONS,
+          coverLetterInstructions: this.clPromptInstructions()
+        });
       }
   }
 
@@ -573,6 +601,10 @@ export class ResumeInputComponent implements OnInit {
       if(confirm('Are you sure you want to reset the Cover Letter instructions to the original defaults? Your custom changes will be lost.')) {
         this.clPromptInstructions.set(DEFAULT_COVER_LETTER_INSTRUCTIONS);
         localStorage.removeItem('custom_cl_instructions');
+        this.instructionsChange.emit({
+          customInstructions: this.promptInstructions(),
+          coverLetterInstructions: DEFAULT_COVER_LETTER_INSTRUCTIONS
+        });
       }
   }
 

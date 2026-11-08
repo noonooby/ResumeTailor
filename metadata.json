@@ -1,5 +1,8 @@
 {
-  "name": "ResumeTailor AI for iOS",
+  "name": "ResumeCreator",
   "description": "Your personal resume assistant, now with an iOS-inspired app experience. Tailor your resume summary and experience to match any job description using Gemini AI.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

@@ -1,1 +1,2 @@
-declare const GEMINI_API_KEY: string;
+// Global type declarations
+export {};

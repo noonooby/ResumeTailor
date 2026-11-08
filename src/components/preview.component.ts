@@ -23,7 +23,7 @@ declare var html2pdf: any;
     }
     
     #resume-container {
-        background: #e2e8f0;
+        background: #eef2ff;
         padding: 60px 0;
         display: flex;
         justify-content: center;
@@ -35,7 +35,9 @@ declare var html2pdf: any;
         width: 210mm;
         min-height: 297mm;
         background: white;
-        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        box-shadow: none;
+        border: 1px solid #e0e7ff;
+        border-radius: 0.75rem;
         margin: 0 auto;
         position: relative;
         box-sizing: border-box;
@@ -47,7 +49,7 @@ declare var html2pdf: any;
         left: -40px;
         right: -40px;
         height: 60px;
-        background: #e2e8f0; /* Matches resume-container to create illusion of separate boxes */
+        background: #eef2ff;
         pointer-events: none;
         z-index: 20;
         display: flex;
@@ -59,12 +61,14 @@ declare var html2pdf: any;
     .page-break-shadow-top {
         position: absolute;
         top: -1px; left: 40px; right: 40px; height: 1px;
-        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        border-top: 1px solid #e0e7ff;
+        box-shadow: none;
     }
     .page-break-shadow-bottom {
         position: absolute;
         bottom: -1px; left: 40px; right: 40px; height: 1px;
-        box-shadow: 0 -5px 15px rgba(0,0,0,0.1);
+        border-bottom: 1px solid #e0e7ff;
+        box-shadow: none;
     }
 
     .page-break-label {
@@ -222,6 +226,20 @@ declare var html2pdf: any;
             </div>
         </div>
 
+        @if (activeTab() === 'letter') {
+             <div class="flex justify-end gap-2 mb-4 print:hidden">
+                <button (click)="generateCoverLetter()" [disabled]="isGeneratingCL() || isLoading() || !data()" class="inline-flex items-center px-4 py-2 border border-indigo-200 shadow-sm text-xs font-bold tracking-wide rounded-lg text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed uppercase">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" [class.animate-spin]="isGeneratingCL()">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    Regenerate CL
+                </button>
+                <button (click)="downloadCoverLetterDoc()" [disabled]="!coverLetterContent() || isGeneratingCL() || isLoading() || !data()" class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-xs font-bold uppercase tracking-wide rounded-lg text-white bg-blue-600 hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                   Export Cover Letter (.DOCX)
+                </button>
+             </div>
+        }
+
         <!-- ATS Analysis Report (Only for Resume) -->
         @if (activeTab() === 'resume' && data()?.atsAnalysis) {
             <div class="bg-indigo-50 border border-indigo-100 rounded-xl p-4 shadow-sm print:hidden transition-all duration-300">
@@ -289,7 +307,7 @@ declare var html2pdf: any;
             <div class="flex flex-wrap items-center gap-4 text-gray-600">
                 <!-- Margin Controls -->
                 <div class="flex items-center gap-2 border-r pr-4">
-                    <span class="text-xs font-bold uppercase text-gray-400">Margins (mm)</span>
+                    <span class="text-xs font-bold uppercase text-gray-400">Margins</span>
                     <div class="flex items-center gap-1">
                         <label class="text-[10px] text-gray-500">T/B</label>
                         <input type="number" [ngModel]="masterStyle()?.margins?.top || 25.4" (ngModelChange)="updateMargin('top', $event); updateMargin('bottom', $event)" class="w-12 px-1 py-0.5 text-xs border rounded" step="1">
@@ -298,6 +316,22 @@ declare var html2pdf: any;
                         <label class="text-[10px] text-gray-500">L/R</label>
                         <input type="number" [ngModel]="masterStyle()?.margins?.left || 19" (ngModelChange)="updateMargin('left', $event); updateMargin('right', $event)" class="w-12 px-1 py-0.5 text-xs border rounded" step="1">
                     </div>
+                </div>
+
+                <!-- Font Controls -->
+                <div class="flex items-center gap-2 border-r pr-4">
+                    <span class="text-xs font-bold uppercase text-gray-400">Font</span>
+                    <select [ngModel]="masterStyle()?.fontFamily || 'Arial'" (ngModelChange)="updateStyle('fontFamily', $event)" class="w-24 px-1 py-0.5 text-xs border rounded bg-white font-sans text-gray-700">
+                        <option value="Arial">Arial</option>
+                        <option value="Calibri">Calibri</option>
+                        <option value="Times New Roman">Times New Roman</option>
+                        <option value="Georgia">Georgia</option>
+                        <option value="Garamond">Garamond</option>
+                        <option value="Verdana">Verdana</option>
+                        <option value="Trebuchet MS">Trebuchet MS</option>
+                    </select>
+                    <input type="number" [ngModel]="masterStyle()?.fontSizePt || 11" (ngModelChange)="updateStyle('fontSizePt', $event)" class="w-12 px-1 py-0.5 text-xs border rounded" step="0.5" min="8" max="24">
+                    <span class="text-[10px] text-gray-500">pt</span>
                 </div>
 
                 <!-- Extra Settings -->
@@ -528,11 +562,12 @@ declare var html2pdf: any;
                     [style.padding-left.mm]="masterStyle()?.margins?.left || 19"
                     [style.padding-right.mm]="masterStyle()?.margins?.right || 19">
 
-                    @if (!coverLetterContent() && !isLoading()) {
+                    @if (!coverLetterContent() && !isLoading() && !isGeneratingCL()) {
                          <div class="h-full flex flex-col items-center justify-center py-20 gap-4">
                              <p class="text-gray-500 text-sm text-center max-w-md">No cover letter generated yet.</p>
+                             <button (click)="generateCoverLetter()" class="px-6 py-2 bg-blue-600 text-white rounded text-sm font-bold shadow hover:bg-blue-700 transition-colors">Generate Cover Letter</button>
                          </div>
-                    } @else if (isLoading() && !coverLetterContent()) {
+                    } @else if (isLoading() || isGeneratingCL()) {
                         <div class="animate-pulse space-y-8">
                             <div class="h-4 bg-gray-100 rounded w-1/4"></div>
                             <div class="space-y-4">
@@ -548,34 +583,16 @@ declare var html2pdf: any;
                         </div>
                     } @else {
                         <div id="cl-content-inner">
-                            <div class="mb-8 text-black">
-                                {{ todayDate }}
-                            </div>
-                            
-                            <div class="mb-4 text-black">
-                                <p>Dear Hiring Manager,</p>
-                            </div>
-
-                            <!-- Content Area (Editable BODY ONLY) -->
                             <textarea 
                                 [ngModel]="coverLetterContent()"
                                 (ngModelChange)="coverLetterContent.set($event); coverLetterUpdate.emit($event)"
-                                class="cl-textarea text-justify text-black whitespace-pre-wrap"
-                                rows="15"
+                                class="cl-textarea w-full text-justify text-black whitespace-pre-wrap outline-none"
+                                rows="30"
+                                spellcheck="false"
                             ></textarea>
-                            
-                            <div class="mt-8 text-black">
-                                <p>Sincerely,</p>
-                                <br>
-                                <p class="font-bold">{{ data()?.personalInfo?.name }}</p>
-                            </div>
                         </div>
                         
-                        <div class="mt-8 pt-4 border-t border-gray-100 print:hidden flex justify-end">
-                             <button (click)="downloadCoverLetterDoc()" [disabled]="!coverLetterContent() || isGeneratingCL() || isLoading() || !data()" class="inline-flex items-center px-3 py-1.5 border border-transparent shadow-sm text-xs font-bold uppercase tracking-wide rounded text-white bg-blue-600 hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                                Export Cover Letter (.DOCX)
-                             </button>
-                        </div>
+                        <!-- Actions moved up -->
                     }
                 </div>
             </div>
@@ -653,20 +670,7 @@ export class PreviewComponent implements OnInit, AfterViewInit, OnDestroy {
   private isAdjusting = false;
 
   ngOnInit() {
-      this.masterStyle.set(this.docService.getMasterStyle());
-
-      const savedSections = localStorage.getItem('resume_section_order');
-      if (savedSections) {
-          try {
-              let parsed = JSON.parse(savedSections);
-              // Filter out skills section
-              parsed = parsed.filter((s: any) => s.id !== 'skills');
-              const defaultSecs = this.sections();
-              const existingIds = new Set(parsed.map((s: any) => s.id));
-              defaultSecs.forEach(ds => { if (!existingIds.has(ds.id)) parsed.push(ds); });
-              this.sections.set(parsed);
-          } catch(e) {}
-      }
+      // Handled by effect
   }
 
   ngAfterViewInit() {
@@ -734,6 +738,13 @@ export class PreviewComponent implements OnInit, AfterViewInit, OnDestroy {
       this.docService.updateMasterStyle(updated);
   }
 
+  updateStyle(key: string, value: any) {
+      const current = this.masterStyle() || {};
+      const updated = { ...current, [key]: value };
+      this.masterStyle.set(updated);
+      this.docService.updateMasterStyle(updated);
+  }
+
   private authService = inject(AuthService);
 
   saveConfigs() {
@@ -751,7 +762,34 @@ export class PreviewComponent implements OnInit, AfterViewInit, OnDestroy {
   }
   
   constructor() {
-      effect(() => { this.saveConfigs(); });
+      effect(() => {
+          const changeId = this.docService.templateChange();
+          // Rely on un-tracked code to not leak dependencies further
+          import('@angular/core').then(({ untracked }) => {
+              untracked(() => {
+                  this.masterStyle.set(this.docService.getMasterStyle());
+                  
+                  const savedSections = localStorage.getItem('resume_section_order');
+                  if (savedSections) {
+                      try {
+                          let parsed = JSON.parse(savedSections);
+                          // Filter out skills section
+                          parsed = parsed.filter((s: any) => s.id !== 'skills');
+                          const defaultSecs = [
+                              { id: 'summary', title: 'SUMMARY' },
+                              { id: 'certifications', title: 'CERTIFICATIONS' }, 
+                              { id: 'experience', title: 'WORK EXPERIENCE' },
+                              { id: 'education', title: 'EDUCATION' }
+                          ];
+                          const existingIds = new Set(parsed.map((s: any) => s.id));
+                          defaultSecs.forEach(ds => { if (!existingIds.has(ds.id)) parsed.push(ds); });
+                          this.sections.set(parsed);
+                      } catch(e) {}
+                  }
+              });
+          });
+      }, { allowSignalWrites: true });
+      // effect(() => { this.saveConfigs(); }); // Commented this out as it causes saveConfigs on every render blindly!
       effect(() => {
           const data = this.data();
           if (data) Object.assign(this, { _tempDataRef: data }); // force ref tracking

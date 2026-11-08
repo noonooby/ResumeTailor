@@ -142,13 +142,12 @@ export class DocProcessorService {
      
      try {
          const snap = await getDoc(doc(db, 'users', user.uid, 'documents', 'masterTemplate'));
-         if (snap.exists() && snap.data()['templateData']) {
+         let hasTemplateData = false;
+         
+         if (snap.exists()) {
              const data = snap.data();
-             const buffer = this.base64ToArrayBuffer(data['templateData']);
-             await safeSetMany([
-                 [this.TEMPLATE_KEY, buffer],
-                 [this.TEMPLATE_NAME_KEY, data['templateName'] || 'Resume_Template.docx']
-             ]);
+             
+             // Restore independent settings even if template payload is missing
              if (data['masterStyle']) {
                  localStorage.setItem(this.MASTER_STYLE_KEY, JSON.stringify(data['masterStyle']));
              }
@@ -156,9 +155,20 @@ export class DocProcessorService {
                  localStorage.setItem('resume_section_order', JSON.stringify(data['sectionOrder']));
              }
              this.templateChange.update(v => v + 1);
-             return true;
-         } else {
-             // Cloud is empty. If we have local data, let's push it TO the cloud
+
+             if (data['templateData']) {
+                 const buffer = this.base64ToArrayBuffer(data['templateData']);
+                 await safeSetMany([
+                     [this.TEMPLATE_KEY, buffer],
+                     [this.TEMPLATE_NAME_KEY, data['templateName'] || 'Resume_Template.docx']
+                 ]);
+                 this.templateChange.update(v => v + 1);
+                 hasTemplateData = true;
+             }
+         }
+         
+         if (!hasTemplateData) {
+             // Cloud lacks template data. If we have local data, let's push it TO the cloud
              const localBase64 = await this.getTemplateBuffer().then(buf => buf ? this.arrayBufferToBase64(buf) : null);
              const localName = await this.getTemplateName();
              if (localBase64 && localName) {
@@ -173,9 +183,11 @@ export class DocProcessorService {
                      updatedAt: serverTimestamp(),
                      masterStyle: masterStyle,
                      sectionOrder: sectionOrder
-                 });
+                 }, { merge: true }); // Merged to prevent overwriting other attributes
                  return true;
              }
+         } else {
+             return true;
          }
      } catch (e) {
          console.error('Failed to sync template to/from cloud', e);

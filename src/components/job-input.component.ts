@@ -14,14 +14,37 @@ import { GeminiService } from '../services/gemini.service';
 
       <!-- URL Input -->
       <div class="mb-4">
+        @if (clipboardNotice()) {
+          <div class="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between gap-2 text-xs text-blue-800 animate-fade-in">
+            <div class="flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-blue-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>{{ clipboardNotice() }}</span>
+            </div>
+            <button (click)="clipboardNotice.set(null)" class="text-blue-500 hover:text-blue-700">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+              </svg>
+            </button>
+          </div>
+        }
         <div class="flex items-center justify-between mb-2">
             <label for="job-url" class="block text-sm font-medium text-gray-700">Job Posting URL</label>
-            <button (click)="pasteUrl()" class="text-xs font-medium text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                </svg>
-                Paste
-            </button>
+            <div class="flex gap-4">
+                <button (click)="jobUrl.set('')" class="text-xs font-medium text-gray-500 hover:text-red-700 flex items-center gap-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    Clear
+                </button>
+                <button (click)="pasteUrl()" class="text-xs font-medium text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                    Paste
+                </button>
+            </div>
         </div>
         <div class="flex gap-2">
           <input 
@@ -81,12 +104,20 @@ import { GeminiService } from '../services/gemini.service';
       <div class="mb-6">
         <div class="flex items-center justify-between mb-2">
             <label for="job-desc" class="block text-sm font-medium text-gray-700">Paste Job Description</label>
-            <button (click)="pasteText()" class="text-xs font-medium text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                </svg>
-                Paste
-            </button>
+            <div class="flex gap-4">
+                <button (click)="text.set('')" class="text-xs font-medium text-gray-500 hover:text-red-700 flex items-center gap-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    Clear
+                </button>
+                <button (click)="pasteText()" class="text-xs font-medium text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                    Paste
+                </button>
+            </div>
         </div>
         <textarea 
           id="job-desc"
@@ -117,6 +148,8 @@ export class JobInputComponent {
   jobUrl = signal('');
   isFetching = signal(false);
   fetchError = signal<string | null>(null);
+  clipboardNotice = signal<string | null>(null);
+  private noticeTimeout: any = null;
 
   submitJob = output<string>();
 
@@ -133,25 +166,56 @@ export class JobInputComponent {
   }
 
   async pasteUrl() {
-      try {
-          const clipboardText = await navigator.clipboard.readText();
-          if (clipboardText) {
-              this.jobUrl.set(clipboardText);
+      this.clipboardNotice.set(null);
+      if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
+          try {
+              const clipboardText = await navigator.clipboard.readText();
+              if (clipboardText) {
+                  this.jobUrl.set(clipboardText);
+                  return;
+              }
+          } catch {
+              // Browser security policy / iframe permission restriction
           }
-      } catch (e) {
-          console.error("Failed to read clipboard:", e);
       }
+
+      // Seamless fallback: Focus and select the URL input directly
+      if (typeof document !== 'undefined') {
+          const inputEl = document.getElementById('job-url') as HTMLInputElement | null;
+          inputEl?.focus();
+          inputEl?.select();
+      }
+      this.showNotice('Please press Ctrl+V (or Cmd+V) to paste the URL directly into the field.');
   }
 
   async pasteText() {
-      try {
-          const clipboardText = await navigator.clipboard.readText();
-          if (clipboardText) {
-              this.text.set(clipboardText);
+      this.clipboardNotice.set(null);
+      if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
+          try {
+              const clipboardText = await navigator.clipboard.readText();
+              if (clipboardText) {
+                  this.text.set(clipboardText);
+                  return;
+              }
+          } catch {
+              // Browser security policy / iframe permission restriction
           }
-      } catch (e) {
-          console.error("Failed to read clipboard:", e);
       }
+
+      // Seamless fallback: Focus the description textarea
+      if (typeof document !== 'undefined') {
+          const textEl = document.getElementById('job-desc') as HTMLTextAreaElement | null;
+          textEl?.focus();
+      }
+      this.showNotice('Please press Ctrl+V (or Cmd+V) to paste the job description directly into the box.');
+  }
+
+  private showNotice(msg: string) {
+      this.clipboardNotice.set(msg);
+      if (this.noticeTimeout) clearTimeout(this.noticeTimeout);
+      this.noticeTimeout = setTimeout(() => {
+          this.clipboardNotice.set(null);
+      }, 4500);
   }
 
   onNext() {

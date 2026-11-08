@@ -21,6 +21,11 @@
             },
             "index": "index.html",
             "browser": "index.tsx",
+            "server": "src/main.server.ts",
+            "outputMode": "server",
+            "ssr": {
+              "entry": "src/server.ts"
+            },
             "tsConfig": "tsconfig.json"
           },
           "configurations": {
@@ -30,7 +35,10 @@
             "development": {
               "optimization": false,
               "extractLicenses": false,
-              "sourceMap": true
+              "sourceMap": true,
+              "externalDependencies": [
+                "@google/genai"
+              ]
             }
           },
           "defaultConfiguration": "production"
